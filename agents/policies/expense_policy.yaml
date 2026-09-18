@@ -1,0 +1,10 @@
+spend_limits:
+  default_max_total: 500.00
+  category_max:
+    meals: 100.00
+    travel: 1000.00
+    office_supplies: 250.00
+category_restrictions:
+  disallowed_categories: ["alcohol", "gifts"]
+receipt_age:
+  max_days_old: 90

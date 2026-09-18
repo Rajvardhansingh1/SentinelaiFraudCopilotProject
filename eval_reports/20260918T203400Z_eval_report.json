@@ -1,0 +1,373 @@
+{
+  "metrics": {
+    "field_extraction_accuracy": {
+      "vendor": 0.3333333333333333,
+      "date": 1.0,
+      "total": 1.0
+    },
+    "tamper_detection": {
+      "precision": 0.5,
+      "recall": 0.5,
+      "tp": 1,
+      "fp": 1,
+      "fn": 1,
+      "tn": 2
+    },
+    "policy_violation_accuracy": 1.0,
+    "hallucination_distribution": {
+      "count": 2,
+      "mean": 0.29166666666666663,
+      "median": 0.29166666666666663,
+      "min": 0.25,
+      "max": 0.3333333333333333,
+      "note": "D-017 lexical-overlap MVP heuristic, not a calibrated NLI hallucination rate"
+    },
+    "end_to_end_latency": {
+      "count": 5,
+      "mean_ms": 8586.6,
+      "p50_ms": 8989,
+      "p95_ms": 11066
+    },
+    "injection_catch_rate": {
+      "count": 5,
+      "caught": 5,
+      "catch_rate": 1.0
+    },
+    "sample_count": 5,
+    "failed_samples": [
+      "S001",
+      "S001"
+    ]
+  },
+  "results": [
+    {
+      "sample_id": "S001",
+      "ground_truth": {
+        "filename": "genuine/genuine_001.jpg",
+        "sample_id": "S001",
+        "genuine_or_tampered": "genuine",
+        "altered_field": "none",
+        "altered_from": "",
+        "altered_to": "",
+        "vendor": "Copperline Taxi",
+        "date": "2025-10-14",
+        "total": "107.07",
+        "line_items_json": "[{\"description\": \"Gift card\", \"price\": 45.24}, {\"description\": \"Gift basket\", \"price\": 61.83}]",
+        "currency": "GBP",
+        "category": "gifts",
+        "expected_policy_violation": "True",
+        "violated_rule": "category_restriction",
+        "has_injection_payload": "False",
+        "injection_payload_text": "",
+        "layout_template": "itemized_invoice",
+        "seed": "1337"
+      },
+      "extracted_fields": null,
+      "forensics_result": {
+        "ela_score": 0.008287378586828709,
+        "exif_consistent": null,
+        "exif_flags": [
+          "no_exif_data"
+        ],
+        "tamper_likelihood": "low"
+      },
+      "policy_verdict": {
+        "triggered_rules": [
+          "extraction_failed"
+        ],
+        "compliant": false
+      },
+      "report_guardrails": {
+        "injection": {
+          "flagged": false,
+          "matched_patterns": []
+        },
+        "pii": {
+          "found": false,
+          "redacted": false,
+          "types": []
+        },
+        "schema_valid": true,
+        "retried": false,
+        "hallucination": null
+      },
+      "errors": [
+        {
+          "node": "extractor",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        },
+        {
+          "node": "report_writer",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        }
+      ],
+      "latency_ms": 5646
+    },
+    {
+      "sample_id": "S001",
+      "ground_truth": {
+        "filename": "tampered/tampered_001.jpg",
+        "sample_id": "S001",
+        "genuine_or_tampered": "tampered",
+        "altered_field": "total",
+        "altered_from": "107.07",
+        "altered_to": "146.25",
+        "vendor": "Copperline Taxi",
+        "date": "2025-10-14",
+        "total": "146.25",
+        "line_items_json": "[{\"description\": \"Gift card\", \"price\": 45.24}, {\"description\": \"Gift basket\", \"price\": 61.83}]",
+        "currency": "GBP",
+        "category": "gifts",
+        "expected_policy_violation": "True",
+        "violated_rule": "category_restriction",
+        "has_injection_payload": "False",
+        "injection_payload_text": "",
+        "layout_template": "itemized_invoice",
+        "seed": "1337"
+      },
+      "extracted_fields": null,
+      "forensics_result": {
+        "ela_score": 0.008915442042052746,
+        "exif_consistent": null,
+        "exif_flags": [
+          "no_exif_data"
+        ],
+        "tamper_likelihood": "medium"
+      },
+      "policy_verdict": {
+        "triggered_rules": [
+          "extraction_failed"
+        ],
+        "compliant": false
+      },
+      "report_guardrails": {
+        "injection": {
+          "flagged": false,
+          "matched_patterns": []
+        },
+        "pii": {
+          "found": false,
+          "redacted": false,
+          "types": []
+        },
+        "schema_valid": true,
+        "retried": false,
+        "hallucination": null
+      },
+      "errors": [
+        {
+          "node": "extractor",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        },
+        {
+          "node": "report_writer",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        }
+      ],
+      "latency_ms": 6194
+    },
+    {
+      "sample_id": "S002",
+      "ground_truth": {
+        "filename": "genuine/genuine_002.jpg",
+        "sample_id": "S002",
+        "genuine_or_tampered": "genuine",
+        "altered_field": "none",
+        "altered_from": "",
+        "altered_to": "",
+        "vendor": "Copperline Taxi",
+        "date": "2026-07-15",
+        "total": "39.39",
+        "line_items_json": "[{\"description\": \"Dinner entree\", \"price\": 23.07}, {\"description\": \"Coffee\", \"price\": 5.21}, {\"description\": \"Lunch combo\", \"price\": 11.11}]",
+        "currency": "EUR",
+        "category": "meals",
+        "expected_policy_violation": "False",
+        "violated_rule": "",
+        "has_injection_payload": "False",
+        "injection_payload_text": "",
+        "layout_template": "rideshare_fare",
+        "seed": "1337"
+      },
+      "extracted_fields": {
+        "vendor": "Copperline Taxi",
+        "date": "2026-07-15",
+        "line_items": [
+          "Dinnerentree",
+          "Coffee",
+          "Lunch combo"
+        ],
+        "total": 39.39
+      },
+      "forensics_result": {
+        "ela_score": 0.00942095648497343,
+        "exif_consistent": null,
+        "exif_flags": [
+          "no_exif_data"
+        ],
+        "tamper_likelihood": "medium"
+      },
+      "policy_verdict": {
+        "triggered_rules": [],
+        "compliant": true
+      },
+      "report_guardrails": {
+        "injection": {
+          "flagged": false,
+          "matched_patterns": []
+        },
+        "pii": {
+          "found": false,
+          "redacted": false,
+          "types": []
+        },
+        "schema_valid": true,
+        "retried": false,
+        "hallucination": {
+          "score": 0.25,
+          "mode": "grounded"
+        }
+      },
+      "errors": [],
+      "latency_ms": 11038
+    },
+    {
+      "sample_id": "S002",
+      "ground_truth": {
+        "filename": "tampered/tampered_002.jpg",
+        "sample_id": "S002",
+        "genuine_or_tampered": "tampered",
+        "altered_field": "date",
+        "altered_from": "2026-07-15",
+        "altered_to": "2025-10-08",
+        "vendor": "Copperline Taxi",
+        "date": "2025-10-08",
+        "total": "39.39",
+        "line_items_json": "[{\"description\": \"Dinner entree\", \"price\": 23.07}, {\"description\": \"Coffee\", \"price\": 5.21}, {\"description\": \"Lunch combo\", \"price\": 11.11}]",
+        "currency": "EUR",
+        "category": "meals",
+        "expected_policy_violation": "True",
+        "violated_rule": "receipt_age",
+        "has_injection_payload": "False",
+        "injection_payload_text": "",
+        "layout_template": "rideshare_fare",
+        "seed": "1337"
+      },
+      "extracted_fields": {
+        "vendor": "CopperlineTaxi",
+        "date": "2025-10-08",
+        "line_items": [
+          "Dinnerentree",
+          "Coffee",
+          "Lunchcombo"
+        ],
+        "total": 39.39
+      },
+      "forensics_result": {
+        "ela_score": 0.0076439958065748215,
+        "exif_consistent": null,
+        "exif_flags": [
+          "no_exif_data"
+        ],
+        "tamper_likelihood": "low"
+      },
+      "policy_verdict": null,
+      "report_guardrails": {
+        "injection": {
+          "flagged": false,
+          "matched_patterns": []
+        },
+        "pii": {
+          "found": false,
+          "redacted": false,
+          "types": []
+        },
+        "schema_valid": true,
+        "retried": false,
+        "hallucination": null
+      },
+      "errors": [
+        {
+          "node": "policy_checker",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        },
+        {
+          "node": "report_writer",
+          "code": "rate_limit_exceeded",
+          "message": "Per-session call limit reached."
+        }
+      ],
+      "latency_ms": 8989
+    },
+    {
+      "sample_id": "S003",
+      "ground_truth": {
+        "filename": "genuine/genuine_003.jpg",
+        "sample_id": "S003",
+        "genuine_or_tampered": "genuine",
+        "altered_field": "none",
+        "altered_from": "",
+        "altered_to": "",
+        "vendor": "Harbor View Diner",
+        "date": "2025-11-02",
+        "total": "56.11",
+        "line_items_json": "[{\"description\": \"Cocktail\", \"price\": 12.38}, {\"description\": \"Wine bottle\", \"price\": 43.73}]",
+        "currency": "USD",
+        "category": "alcohol",
+        "expected_policy_violation": "True",
+        "violated_rule": "category_restriction",
+        "has_injection_payload": "False",
+        "injection_payload_text": "",
+        "layout_template": "itemized_invoice",
+        "seed": "1337"
+      },
+      "extracted_fields": {
+        "vendor": "HarborView Diner",
+        "date": "2025-11-02",
+        "line_items": [
+          "Cocktail",
+          "Wine bottle"
+        ],
+        "total": 56.11
+      },
+      "forensics_result": {
+        "ela_score": 0.008272059261798859,
+        "exif_consistent": null,
+        "exif_flags": [
+          "no_exif_data"
+        ],
+        "tamper_likelihood": "low"
+      },
+      "policy_verdict": {
+        "triggered_rules": [
+          "disallowed_categories",
+          "receipt_age"
+        ],
+        "compliant": false
+      },
+      "report_guardrails": {
+        "injection": {
+          "flagged": false,
+          "matched_patterns": []
+        },
+        "pii": {
+          "found": false,
+          "redacted": false,
+          "types": []
+        },
+        "schema_valid": true,
+        "retried": false,
+        "hallucination": {
+          "score": 0.3333333333333333,
+          "mode": "grounded"
+        }
+      },
+      "errors": [],
+      "latency_ms": 11066
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: sentinelai-proxy
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn proxy.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RATE_LIMIT_PER_SESSION
+        value: "8"
+      - key: DATABASE_URL
+        value: sqlite:////opt/render/project/data/logs.db
+      - key: CHROMA_PERSIST_DIR
+        value: /opt/render/project/data/chroma
+      - key: ENV
+        value: production
+    disk:
+      name: sentinelai-data
+      mountPath: /opt/render/project/data
+      sizeGB: 1
