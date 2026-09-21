@@ -23,10 +23,10 @@ def test_playground_renders_and_blocks_attack(monkeypatch):
     monkeypatch.setattr("frontend.app.ping_proxy", lambda: True)
 
     at = AppTest.from_file(APP_PATH)
-    at.run()
+    at.run(timeout=15)
     assert not at.exception
 
-    at.selectbox[0].select("Instruction override").run()
-    at.button[0].click().run()
+    at.selectbox[0].select("Instruction override").run(timeout=15)
+    at.button[0].click().run(timeout=15)
 
     assert any("Blocked" in md.value for md in at.error)

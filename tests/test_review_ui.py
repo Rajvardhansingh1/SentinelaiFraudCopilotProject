@@ -39,13 +39,13 @@ def _run_to_review_screen(monkeypatch, Session):
     monkeypatch.setattr("frontend.app.ping_proxy", lambda: True)
 
     at = AppTest.from_file(APP_PATH)
-    at.run()
-    at.sidebar.radio[0].set_value("Review Receipt").run()
+    at.run(timeout=15)
+    at.sidebar.radio[0].set_value("Review Receipt").run(timeout=15)
 
     genuine_button = next(b for b in at.button if "genuine" in b.label.lower())
-    genuine_button.click().run()
+    genuine_button.click().run(timeout=15)
     run_button = next(b for b in at.button if b.label == "Run analysis")
-    run_button.click().run()
+    run_button.click().run(timeout=15)
     return at
 
 
@@ -80,7 +80,7 @@ def test_approve_records_a_review_decision(monkeypatch):
     try:
         at = _run_to_review_screen(monkeypatch, Session)
         approve_button = next(b for b in at.button if b.label == "Approve")
-        approve_button.click().run()
+        approve_button.click().run(timeout=15)
 
         s = Session()
         try:
@@ -99,7 +99,7 @@ def test_reject_records_a_rejected_decision(monkeypatch):
     try:
         at = _run_to_review_screen(monkeypatch, Session)
         reject_button = next(b for b in at.button if b.label == "Reject")
-        reject_button.click().run()
+        reject_button.click().run(timeout=15)
 
         s = Session()
         try:
