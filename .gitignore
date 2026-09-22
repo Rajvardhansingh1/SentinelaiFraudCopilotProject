@@ -21,3 +21,6 @@ web/playwright-report/
 
 # Playwright-cli debug snapshots
 .playwright-cli/
+
+*.md
+
