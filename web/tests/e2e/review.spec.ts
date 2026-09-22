@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-test("genuine sample: verdict renders before evidence, approve records a decision", async ({ page }) => {
+// Fraud Copilot (Receipt Review) is paused while SentinelAI is expanded — /review
+// now renders a paused notice instead of the live pipeline. Skipped, not deleted;
+// un-skip when the feature resumes.
+test.skip("genuine sample: verdict renders before evidence, approve records a decision", async ({ page }) => {
   await page.goto("/review");
   await page.getByTestId("sample-genuine").click();
   await page.getByTestId("run-analysis-button").click();

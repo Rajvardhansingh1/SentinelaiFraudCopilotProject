@@ -1,6 +1,7 @@
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { WeaknessCoach } from "./weakness-coach";
+import { classifyResult } from "@/lib/classify-result";
 import type { GenerateResponse } from "@/lib/types";
 
 interface Props {
@@ -13,8 +14,9 @@ interface Props {
 
 export function ResultCard({ status, body, promptText, cachedBanner, isOwnPrompt }: Props) {
   const injection = body.guardrails?.injection;
-  const blocked = injection?.flagged === true;
-  const failed = status !== 200 && status !== 400;
+  const outcome = classifyResult(status, body);
+  const blocked = outcome === "blocked";
+  const failed = outcome === "failed";
 
   return (
     <div data-testid="result-card">

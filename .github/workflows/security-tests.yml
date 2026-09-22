@@ -1,0 +1,56 @@
+name: SentinelAI Security Tests
+
+# Phase 8 (D-047). This is separate from ci.yml (which runs the unit test
+# suite) — this workflow boots a real SentinelAI proxy and runs its own
+# security tests against it via scripts/sentinel_ci.py, the same CLI a
+# developer runs locally. No provider API keys are required: only the local
+# pattern/regex-based tests (injection/jailbreak/system-prompt-extraction/
+# sensitive-disclosure) run without any LLM key configured.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  security-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      - name: Start SentinelAI proxy
+        run: |
+          nohup python -m uvicorn proxy.main:app --port 8000 > proxy.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+        env:
+          DATABASE_URL: "sqlite:///./ci_security.db"
+
+      - name: Run security tests and enforce failure policy
+        run: |
+          python -m scripts.sentinel_ci \
+            --target http://localhost:8000 \
+            --fail-on-severity critical,high \
+            --max-failures 0 \
+            --json-out security-results.json \
+            --md-out security-summary.md
+
+      - name: Publish summary
+        if: always()
+        run: cat security-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload machine-readable results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-test-results
+          path: security-results.json
+
+      - name: Show proxy log on failure
+        if: failure()
+        run: cat proxy.log

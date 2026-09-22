@@ -8,12 +8,22 @@ class Message(BaseModel):
     content: str
 
 
+class ProviderConfig(BaseModel):
+    """BYOK / explicit-provider selection (D-041). `provider` names a key in
+    proxy.provider.PROVIDER_REGISTRY. `api_key` is caller-supplied, used only
+    server-side for this one call — never logged, never echoed back."""
+
+    provider: Literal["groq", "gemini"] | None = None
+    api_key: str | None = None
+
+
 class GenerateRequest(BaseModel):
     session_id: str
     operation: Literal["extract", "policy_check", "report", "playground"]
     messages: list[Message]
     schema_name: str | None = None
     grounding_context: str | None = None
+    provider_config: ProviderConfig | None = None
 
 
 class InjectionResult(BaseModel):

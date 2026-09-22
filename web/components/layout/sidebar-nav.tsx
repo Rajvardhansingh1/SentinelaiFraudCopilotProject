@@ -6,7 +6,12 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/playground", label: "Playground" },
-  { href: "/review", label: "Review" },
+  { href: "/security", label: "Security Tests" },
+  { href: "/findings", label: "Findings" },
+  { href: "/regression", label: "Regression" },
+  { href: "/monitoring", label: "Monitoring" },
+  { href: "/agents", label: "Agent Security" },
+  { href: "/reports", label: "Reports" },
   { href: "/dashboard", label: "Dashboard" },
 ];
 

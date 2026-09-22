@@ -9,6 +9,8 @@ This is a two-layer system:
 - **SentinelAI** — a reusable, domain-agnostic FastAPI proxy that sits between callers and LLM providers and applies request/response guardrails and evaluation.
 - **Fraud Copilot** — a LangGraph multi-agent expense/invoice fraud-detection application built on SentinelAI.
 
+**Current focus (D-040, 2026-09-23): Fraud Copilot is paused.** Active development targets `proxy/` (SentinelAI) only, per `phase_dev_upgrade.md`. Fraud Copilot code (`agents/`, `web/app/review/`, `web/components/review/`) stays on disk untouched but is out of the active nav/run flow — do not add new Fraud Copilot functionality unless the user explicitly resumes it. Do not delete Fraud Copilot code as part of ordinary SentinelAI work.
+
 The complete original project definition is in:
 
 **`Project 1 Spec — SentinelAI + Fraud Copilot.md`**
@@ -412,6 +414,26 @@ Update only when an implementation requirement, contract, acceptance criterion, 
 Do not modify it during ordinary development.
 
 The goal is for another agent to continue by reading `state.md`, then the relevant `spec.md` section, while being able to return to the original specification whenever there is uncertainty.
+
+## User-Controlled Changes
+
+The agent must not make high-impact architectural decisions silently.
+
+Before:
+
+- changing the database architecture
+- replacing an AI provider
+- changing authentication
+- introducing a major infrastructure dependency
+- changing secret storage
+- changing deployment architecture
+- deleting existing functionality
+- introducing a new runtime service
+- changing public API contracts
+
+stop and explain the proposed change.
+
+The user must explicitly approve major architectural changes.
 
 ## 16. Final Rule
 

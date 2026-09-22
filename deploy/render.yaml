@@ -19,7 +19,38 @@ services:
         value: /opt/render/project/data/chroma
       - key: ENV
         value: production
+      - key: ALLOWED_ORIGINS
+        sync: false  # set to the real frontend origin(s) at deploy time
     disk:
       name: sentinelai-data
       mountPath: /opt/render/project/data
       sizeGB: 1
+
+  # Runtime Gateway (D-049): separate, stateless service — no disk, no DB.
+  # Provider keys are set on this service too; they never leave the server.
+  - type: web
+    name: sentinelai-gateway
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn gateway.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ENV
+        value: production
+      - key: GATEWAY_BLOCK_ON_INJECTION
+        value: "true"
+      - key: GATEWAY_REQUEST_PII_ACTION
+        value: redact
+      - key: GATEWAY_RESPONSE_PII_ACTION
+        value: redact
+      - key: GATEWAY_STORE_RAW_CONTENT
+        value: "false"
+      - key: GATEWAY_RECORD_EVENTS
+        value: "false"  # true requires a shared DATABASE_URL (not the proxy's local SQLite disk)
+      - key: ALLOWED_ORIGINS
+        sync: false

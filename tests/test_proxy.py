@@ -168,3 +168,59 @@ def test_generate_skips_hallucination_without_grounding():
     client = _client()
     resp = client.post("/v1/generate", json=_req(session_id="sess-noground"))
     assert resp.json()["guardrails"]["hallucination"] is None
+
+
+# --- D-041: provider abstraction + BYOK, exercised at the /v1/generate layer ---
+
+
+def test_generate_ignores_provider_config_default_path_unaffected():
+    """No provider_config at all still uses the Depends-injected default
+    (existing tests' override mechanism) — request schema accepting the new
+    optional field doesn't change default behavior."""
+    client = _client()
+    resp = client.post("/v1/generate", json=_req())
+    assert resp.status_code == 200
+
+
+def test_generate_rejects_unknown_provider_name():
+    client = _client()
+    body = _req(session_id="sess-badprovider")
+    body["provider_config"] = {"provider": "not_a_real_provider", "api_key": "x"}
+    resp = client.post("/v1/generate", json=body)
+    assert resp.status_code == 422  # Literal validation, never reaches provider code
+
+
+def test_generate_explicit_provider_missing_credentials_returns_400(monkeypatch):
+    """Caller explicitly asks for groq, gives no BYOK key, server has none either."""
+    monkeypatch.setattr("proxy.provider.settings.groq_api_key", "")
+    client = _client()
+    body = _req(session_id="sess-nocreds")
+    body["provider_config"] = {"provider": "groq", "api_key": None}
+    resp = client.post("/v1/generate", json=body)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "provider_credentials_missing"
+
+
+def test_generate_byok_key_never_echoed_in_response(monkeypatch):
+    secret_key = "sk-caller-byok-secret-999"
+
+    class FakeCompletions:
+        def create(self, model, messages):
+            resp = type("R", (), {})()
+            resp.choices = [type("C", (), {"message": type("M", (), {"content": "byok ok"})()})]
+            resp.usage = None
+            return resp
+
+    class FakeGroqClient:
+        def __init__(self, api_key):
+            assert api_key == secret_key  # proves the caller's key, not settings', was used
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr("groq.Groq", FakeGroqClient, raising=False)
+    client = _client()
+    body = _req(session_id="sess-byok-ok")
+    body["provider_config"] = {"provider": "groq", "api_key": secret_key}
+    resp = client.post("/v1/generate", json=body)
+    assert resp.status_code == 200
+    assert secret_key not in resp.text
+    assert resp.json()["usage"]["provider"] == "groq"

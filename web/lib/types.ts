@@ -150,3 +150,206 @@ export interface ReviewDecisionResult {
   status: number;
   body: ReviewDecision | { error: { code: string; message: string } };
 }
+
+// --- proxy/engine (Phase 3/4 security testing engine) mirrors ---
+
+export type TestStatusValue = "PASS" | "FAIL" | "ERROR" | "NOT_RUN" | "INCONCLUSIVE";
+export type Severity = "low" | "medium" | "high" | "critical";
+
+export interface RawExecution {
+  raw_input: string;
+  raw_output: unknown;
+  provider: string;
+  model: string;
+  status_code: number | null;
+  extra: Record<string, unknown>;
+}
+
+export interface SecurityTestResult {
+  test_id: string;
+  name: string;
+  category: string;
+  severity: Severity;
+  status: TestStatusValue;
+  detail: string;
+  evidence: RawExecution;
+  executed_at: string;
+  reproduction: Record<string, unknown>;
+}
+
+// --- proxy/findings.py (Phase 5 findings subsystem) mirrors ---
+
+export type FindingStatusValue = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "RETEST_REQUIRED";
+
+export interface Finding {
+  id: number;
+  test_id: string;
+  category: string;
+  severity: Severity;
+  title: string;
+  description: string;
+  affected_target: string;
+  evidence: {
+    raw_input: string;
+    raw_output: unknown;
+    provider: string;
+    model: string;
+    status_code: number | null;
+  };
+  reproduction: Record<string, unknown>;
+  provider: string;
+  model: string;
+  status: FindingStatusValue;
+  remediation: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FindingsSyncResult {
+  results: SecurityTestResult[];
+  findings_created: Finding[];
+}
+
+// --- proxy/dashboard.py (Phase 6 security dashboard) mirror ---
+
+export interface RecentActivityRow {
+  test_id: string;
+  category: string;
+  severity: Severity;
+  status: TestStatusValue;
+  provider: string;
+  model: string;
+  executed_at: string;
+}
+
+export interface AffectedModel {
+  provider: string;
+  model: string;
+}
+
+export type SecurityDashboardResult =
+  | { status: "ok"; data: SecurityDashboardSummary }
+  | { status: "error"; message: string };
+
+// --- proxy/agent_policy.py + agent_actions.py (Phase 9 agent security) mirror ---
+
+export type AgentDecision = "ALLOW" | "DENY" | "REQUIRE_APPROVAL";
+
+export interface AgentProfile {
+  agent_id: string;
+  model: string;
+  tools: string[];
+  data_sources: string[];
+  rules: { tool: string; action: string; decision: AgentDecision }[];
+}
+
+export interface AgentActionLog {
+  id: number;
+  agent_id: string;
+  tool: string;
+  action: string;
+  data_source: string | null;
+  decision: AgentDecision;
+  reason: string;
+  execution_result: string;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ApiResult<T> = { status: "ok"; data: T } | { status: "error"; code: string; message: string };
+
+// --- proxy/events.py (Phase 11 monitoring) mirror ---
+
+export type EventSeverity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface SecurityEvent {
+  id: number;
+  event_type: string;
+  severity: EventSeverity;
+  category: string;
+  source: string;
+  application: string | null;
+  model: string | null;
+  summary: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EventsConfig {
+  enabled: boolean;
+  retention_days: number;
+  min_severity: EventSeverity;
+  gateway_record_events: boolean;
+  event_types: string[];
+  severities: EventSeverity[];
+}
+
+export interface EventFilters {
+  event_type?: string;
+  min_severity?: string;
+  category?: string;
+  application?: string;
+  model?: string;
+  since?: string;
+}
+
+// --- proxy/regression.py (Phase 7 regression testing) mirror ---
+
+export interface Baseline {
+  id: number;
+  name: string;
+  run_id: string;
+  created_at: string;
+}
+
+export interface RegressionEntry {
+  test_id: string;
+  category: string;
+  baseline_status: TestStatusValue | null;
+  current_status: TestStatusValue;
+  baseline_severity: Severity | null;
+  current_severity: Severity;
+}
+
+export interface FindingSummary {
+  id: number;
+  test_id: string;
+  severity: Severity;
+  title: string;
+}
+
+export interface RegressionReport {
+  regressions: RegressionEntry[];
+  new_failures: RegressionEntry[];
+  fixed: RegressionEntry[];
+  unchanged: RegressionEntry[];
+  other_changes: RegressionEntry[];
+  severity_changes: RegressionEntry[];
+  added_tests: string[];
+  removed_tests: string[];
+  provider_config_changed: boolean;
+  baseline_config: AffectedModel[];
+  current_config: AffectedModel[];
+  per_test: RegressionEntry[];
+  baseline: Baseline;
+  current_run_id: string;
+  findings: {
+    new_findings: FindingSummary[];
+    resolved_findings: FindingSummary[];
+  };
+}
+
+export interface SecurityDashboardSummary {
+  last_run_at: string | null;
+  total_tests: number;
+  passed: number;
+  failed: number;
+  errors: number;
+  not_run: number;
+  inconclusive: number;
+  open_findings: number;
+  severity_distribution: Partial<Record<Severity, number>>;
+  recent_activity: RecentActivityRow[];
+  affected_models: AffectedModel[];
+}

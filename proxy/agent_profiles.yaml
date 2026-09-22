@@ -1,0 +1,18 @@
+# Phase 9 (D-048): server-side agent profiles for SentinelAI's policy layer.
+# Profiles are only ever loaded from this file (path: AGENT_PROFILES_PATH),
+# never accepted from a request. Evaluation is default-deny; among matching
+# rules DENY > REQUIRE_APPROVAL > ALLOW. `action: "*"` is allowed in a rule,
+# never in a request.
+#
+# Example profile — replace with your own agents.
+agents:
+  - agent_id: support-assistant
+    model: openai/gpt-oss-20b
+    tools: [knowledge_base, ticketing, email]
+    data_sources: [public_docs, ticket_db]
+    rules:
+      - {tool: knowledge_base, action: search, decision: ALLOW}
+      - {tool: ticketing, action: read, decision: ALLOW}
+      - {tool: ticketing, action: update, decision: REQUIRE_APPROVAL}
+      - {tool: ticketing, action: delete, decision: DENY}
+      - {tool: email, action: "*", decision: REQUIRE_APPROVAL}

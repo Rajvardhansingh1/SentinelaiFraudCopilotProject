@@ -4,6 +4,8 @@
 **Date:** 2026-09-18  
 **Method:** Spec-driven development
 
+**Note (2026-09-23, D-040):** This document describes the original 7-phase build, all done — it is not rewritten. Fraud Copilot is currently paused; see `state.md`/`decision.md` D-040 and `phase_dev_upgrade.md` for the active SentinelAI-only roadmap.
+
 ## 1. Product Definition
 
 SentinelAI + Fraud Copilot is a two-layer system:

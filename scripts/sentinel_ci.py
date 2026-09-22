@@ -1,0 +1,91 @@
+"""Phase 8 (D-047): CI entrypoint for running SentinelAI's security tests
+against a target and enforcing an explicitly configured failure policy.
+
+Talks to a *running* SentinelAI instance over plain HTTP only — it never
+imports provider SDKs and never needs an API key itself. The target instance
+holds its own provider credentials server-side (D-041/D-002); nothing here
+requires putting a secret in source code or in CI config.
+
+Usage:
+    python -m scripts.sentinel_ci --target http://localhost:8000
+    python -m scripts.sentinel_ci --target http://localhost:8000 \\
+        --category prompt_injection,jailbreak \\
+        --fail-on-severity critical,high \\
+        --check-regression --max-regressions 0 \\
+        --json-out results.json --md-out summary.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import requests
+
+from proxy.ci import CIPolicy, evaluate, format_human_summary
+
+
+def _fetch_results(target: str, category: str | None) -> list[dict]:
+    params = {"category": category} if category else {}
+    resp = requests.post(f"{target}/v1/findings/sync", params=params, timeout=120)
+    resp.raise_for_status()
+    return resp.json()["results"]
+
+
+def _fetch_regression_report(target: str) -> dict | None:
+    resp = requests.get(f"{target}/v1/regression-report", timeout=60)
+    if resp.status_code == 200:
+        return resp.json()
+    if resp.status_code in (404, 409):
+        detail = resp.json().get("detail", {})
+        print(f"Regression check skipped: {detail.get('message', resp.text)}", file=sys.stderr)
+        return None
+    resp.raise_for_status()
+    return None  # unreachable, satisfies type checkers
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--target", required=True, help="Base URL of a running SentinelAI proxy, e.g. http://localhost:8000")
+    parser.add_argument("--category", default=None, help="Comma-separated test categories to run (default: all)")
+    parser.add_argument("--fail-on-status", default="FAIL", help="Comma-separated statuses that count toward failure (default: FAIL)")
+    parser.add_argument("--fail-on-severity", default=None, help="Comma-separated severities that count toward failure (default: any severity)")
+    parser.add_argument("--max-failures", type=int, default=0, help="Fail only if more than this many results match the policy (default: 0)")
+    parser.add_argument("--check-regression", action="store_true", help="Also fetch the latest regression report and factor it into the policy")
+    parser.add_argument("--max-regressions", type=int, default=0, help="Fail only if more than this many regressions (default: 0; requires --check-regression)")
+    parser.add_argument("--json-out", default=None, help="Write machine-readable results + verdict to this file")
+    parser.add_argument("--md-out", default=None, help="Write the human-readable Markdown summary to this file")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+
+    results = _fetch_results(args.target, args.category)
+
+    regression_report = None
+    if args.check_regression:
+        regression_report = _fetch_regression_report(args.target)
+
+    policy = CIPolicy(
+        fail_on_statuses=frozenset(s.strip() for s in args.fail_on_status.split(",") if s.strip()),
+        fail_on_severities=frozenset(s.strip() for s in args.fail_on_severity.split(",") if s.strip()) if args.fail_on_severity else None,
+        max_failures=args.max_failures,
+        max_regressions=args.max_regressions,
+    )
+    verdict = evaluate(results, policy, regression_report)
+    summary = format_human_summary(results, verdict, args.target)
+    print(summary)
+
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps({"results": results, "verdict": verdict}, indent=2, default=str))
+    if args.md_out:
+        Path(args.md_out).write_text(summary)
+
+    return 1 if verdict["should_fail"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

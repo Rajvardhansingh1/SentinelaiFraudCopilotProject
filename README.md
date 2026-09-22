@@ -45,7 +45,9 @@ The final fraud/no-fraud result is never automatically applied. A human reviewer
 
 ## Running it
 
-Two backend services, one frontend, all local by default.
+**Fraud Copilot is currently paused** — this project is focused on expanding SentinelAI
+(the platform layer) on its own. `agents/api.py` (Fraud Copilot's backend) is not part
+of the normal run flow; its code stays on disk. One backend service, one frontend.
 
 ```bash
 # 1. Python deps (repo root)
@@ -60,21 +62,17 @@ copy .env.example .env          # cp on Linux/Mac
 # 3. Start SentinelAI proxy (terminal 1)
 .venv\Scripts\python -m uvicorn proxy.main:app --port 8000
 
-# 4. Start the Fraud Copilot API (terminal 2)
-.venv\Scripts\python -m uvicorn agents.api:app --port 8001
-
-# 5. Start the Next.js frontend (terminal 3)
+# 4. Start the Next.js frontend (terminal 2)
 cd web
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` — redirects to the Red-Team Playground. Sidebar nav covers Playground / Review Receipt / Eval Dashboard.
+Open `http://localhost:3000` — redirects to the Red-Team Playground. Sidebar nav covers Playground / Eval Dashboard. `/review` (Receipt Review) still exists on disk but shows a paused notice and isn't linked from the sidebar.
 
-`web/.env.local` (copy from `.env.local.example`) points the frontend at the two backend ports:
+`web/.env.local` (copy from `.env.local.example`) points the frontend at the proxy:
 ```
 NEXT_PUBLIC_PROXY_BASE_URL=http://localhost:8000
-NEXT_PUBLIC_AGENTS_API_BASE_URL=http://localhost:8001
 ```
 
 **The old Streamlit UI (`frontend/`) is retired** (D-038) — kept on disk, not deleted, but no longer the recommended way to run this. If you need it: `.venv\Scripts\python -m streamlit run frontend\app.py` (must use `python -m streamlit`, not bare `streamlit`, or the absolute imports break).
@@ -162,4 +160,4 @@ The evaluation dataset is synthetic/lightly templated. It contains genuine-looki
 
 ## Current status
 
-All 7 original phases implemented and tested (126 Python tests passing). Frontend rewritten from Streamlit to Next.js (`web/`) — active UI. Not yet deployed live anywhere (Render/HF Spaces/Vercel accounts still needed). See `state.md` for the exact continuation point and open items.
+All 7 original phases implemented and tested (126 Python tests passing). Frontend rewritten from Streamlit to Next.js (`web/`) — active UI. Not yet deployed live anywhere (Render/HF Spaces/Vercel accounts still needed). **Fraud Copilot is paused** (D-040) — active work is expanding SentinelAI itself (see `phase_dev_upgrade.md`). See `state.md` for the exact continuation point and open items.

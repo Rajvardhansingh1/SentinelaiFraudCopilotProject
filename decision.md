@@ -657,6 +657,264 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 
 ---
 
+## D-040 — Fraud Copilot paused; active focus shifts to expanding SentinelAI alone
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** User request: build out SentinelAI (the platform layer) per `phase_dev_upgrade.md`'s phased plan (provider abstraction/BYOK, security engine, attack library, findings, dashboard, regression testing, CI/CD, agent security, gateway, monitoring, reports) without also carrying Fraud Copilot (the application layer) forward right now. Fraud Copilot resumes later.
+
+**Decision:** Fraud Copilot functionality is removed from the active frontend/backend surface, code kept on disk (no deletion — same reversible posture as D-038's Streamlit retirement):
+- `web/components/layout/sidebar-nav.tsx`: "Review" link removed.
+- `web/app/review/page.tsx`: replaced with a paused notice; original implementation's supporting components (`web/components/review/**`) and `lib/api.ts`'s `analyzeReceipt`/`recordReviewDecision` are untouched, just unlinked.
+- `web/tests/e2e/review.spec.ts`: `test.skip`, not deleted.
+- `agents/api.py` (Fraud Copilot's own FastAPI service, port 8001) is no longer part of the documented/normal run flow (`README.md` updated). Code untouched.
+- `GET /v1/calls` moved onto `proxy/main.py` itself (it only ever read `proxy.db.CallLog`, i.e. SentinelAI's own call log — never fraud-specific data) so the Eval Dashboard keeps working without `agents/api.py` running. `web/lib/api.ts::getCalls()` now calls `PROXY_BASE_URL` instead of `AGENTS_API_BASE_URL`.
+- Eval Dashboard itself is kept — it always displayed SentinelAI proxy call/guardrail data (D-028), not Fraud Copilot data, so it's in-scope for a SentinelAI-only focus.
+
+**Rationale:** D-001's two-layer architecture already separates SentinelAI (domain-agnostic) from Fraud Copilot (the application). Pausing Fraud Copilot is a scope-and-visibility change, not an architecture change — nothing about SentinelAI's design needed to move for this.
+
+**Consequence:** `agents/`, `web/app/review/`, `web/components/review/` remain on disk, untested-by-CI-in-practice while paused (their existing tests still exist, just not exercised as part of the active workflow). `spec.md`'s original 7-phase Fraud Copilot content stays historically accurate (describes what was built) — not rewritten. Forward work (per `phase_dev_upgrade.md`) targets `proxy/` only. Resuming Fraud Copilot later means: restore the sidebar link, restore `web/app/review/page.tsx`'s original content, run `agents/api.py` again — no code reconstruction needed.
+
+---
+
+## D-041 — Provider abstraction + BYOK (phase_dev_upgrade.md Phase 2)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** `proxy/provider.py` already had a clean `Provider` Protocol and a decoupled security engine (`proxy/main.py` only ever called `.generate()`, no SDK imports at that layer) — Phase 2's interface/decoupling requirements were substantially already met. What was missing: per-call provider selection and BYOK (caller-supplied API key), and a registry so adding a provider doesn't touch `proxy/main.py`.
+
+**Decision:**
+- `GroqProvider`/`GeminiProvider` gain an `api_key: str | None = None` constructor param; `None` means "use the server's own key" (unchanged default behavior).
+- New `MissingCredentialsError(ProviderError)` raised inside `generate()` before any SDK import/network call when no key resolves (neither BYOK nor server config).
+- New `PROVIDER_REGISTRY: dict[str, type[Provider]]` and `build_provider(name, api_key)` — the extension point for future providers.
+- `GenerateRequest.provider_config: ProviderConfig | None` (`{provider, api_key}`) lets a caller pick one named, non-fallback provider with an optional BYOK key. Omitted (the default) preserves the exact pre-D-041 `FallbackProvider(GroqProvider(), GeminiProvider())` behavior — zero change for existing callers.
+- `proxy/main.py::generate()` catches `MissingCredentialsError` specifically → 400 `provider_credentials_missing`, distinct from the existing 502 `provider_failed` (key present but rejected/timeout/etc).
+
+**Rationale:** Minimal diff on top of an already-decoupled design (YAGNI — no need to redesign the interface itself). BYOK as an optional per-request override, not a new server mode, keeps the default path's behavior and tests untouched.
+
+**Consequence:** `docs/PROVIDERS.md` documents the interface, selection, credential handling, error codes, and how to add a provider. 12 new tests (`tests/test_provider.py`, `tests/test_proxy.py`) cover valid config, missing/invalid credentials, timeout, normal inference, and credential non-exposure. Full suite: 137 passed, 3 skipped (unchanged skip count).
+
+---
+
+## D-042 — Security testing engine framework (phase_dev_upgrade.md Phase 3)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 3 asks for a reusable framework separating TEST DEFINITION -> EXECUTION -> EVALUATION -> FINDING -> EVIDENCE, an extensible plugin architecture (no attack type hardcoded into the core), and migration of the existing Sentinel tests into it without breaking them. "Finding" generation proper is explicitly Phase 5's job ("build the Findings subsystem on top of the existing security engine") — Phase 3 stops at a rich, self-contained `TestResult`.
+
+**Decision:** New `proxy/engine/` package: `models.py` (`SecurityTest`, `RawExecution`, `TestResult`, `Severity`, `TestStatus` — the 5-state status enum required by Phase 4 is built in now, not bolted on later), `runner.py` (`run_test`/`run_suite`, never raises — a plugin bug becomes `TestStatus.ERROR`), `registry.py` (`register`/`all_tests`, the sole extension point). `proxy/engine/plugins/injection_tests.py` migrates the 4 existing playground sample attacks (`frontend/data/sample_attacks.py`, already regression-tested in `tests/test_sample_attacks.py`) to run against the real `check_injection()` detector — same prompts (imported, not retyped), same detector, now wrapped in the engine's pipeline.
+
+**Rationale:** Matches the explicit separation the spec asks for while reusing everything that already worked (`check_injection`, the sample-attack list) rather than inventing new attack content — that's Phase 4's job.
+
+**Consequence:** `docs/SECURITY_ENGINE.md` documents the pipeline and how to add a plugin. 8 new tests (`tests/test_security_engine.py`) cover the runner's error handling, registry accumulation, and a regression guard that the migrated injection tests still catch the same attacks the raw detector does. Full suite: 145 passed, 3 skipped (up from 137/3, zero regressions).
+
+---
+
+## D-043 — Attack library expansion + security-test UI (phase_dev_upgrade.md Phase 4)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 4 asks for 5 attack categories (prompt injection, jailbreak, system prompt extraction, sensitive information disclosure, unsafe output behavior), multiple test cases per category, deterministic evaluation where possible, severity by documented rule, reproducibility, regression tests, and a UI that visibly distinguishes PASS/FAIL/ERROR/NOT_RUN/INCONCLUSIVE — explicitly warning not to claim a model is secure just because tests pass.
+
+**Decision:**
+- 3 new `proxy/engine/plugins/*`: `jailbreak_tests.py` (3 cases), `system_prompt_extraction_tests.py` (4 cases, exercising `attack_library.py` patterns that had no prior test case), `sensitive_disclosure_tests.py` (4 cases, using `check_pii()` against simulated model output rather than the inbound detector).
+- `unsafe_output_tests.py` (2 cases) has no real classifier to evaluate against — honestly reports `TestStatus.INCONCLUSIVE` always, with a `ponytail:` comment naming the upgrade path (a moderation/LLM-judge call inside `evaluate()`), rather than fabricating a PASS.
+- `injection_tests.py` refactored to share a new `plugins/_common.py::injection_pattern_test()` helper with the two other pattern-based plugins (no behavior change, less duplication).
+- Severity rubric documented in `docs/SECURITY_ENGINE.md` (CRITICAL/HIGH/MEDIUM/LOW by real-world impact in Fraud Copilot's context).
+- New `POST /v1/security-tests/run` (`proxy/main.py`) runs the full registered suite (all local/deterministic, safe synchronously) and returns serialized `TestResult`s.
+- New `web/app/security/page.tsx` + `components/security/status-badge.tsx`: table of every result, status badge mapped 1:1 across the 5 `Badge` component variants (`success`/`danger`/`default`/`warning`/`muted`) so no two states share a color. New sidebar nav entry "Security Tests".
+
+**Rationale:** Reuses the Phase 3 engine and existing detector/scanner exactly as designed — no new detection logic invented except where the spec explicitly requires new categories. The INCONCLUSIVE-only unsafe-output plugin is a direct, literal application of Phase 4's own instruction not to overclaim.
+
+**Consequence:** 9 new Python tests (`tests/test_attack_library_phase4.py`), full suite 154 passed/3 skipped (up from 145/3, zero regressions). Web: `tsc --noEmit` clean, vitest 13 passed (unchanged). `docs/SECURITY_ENGINE.md` updated with the category table, severity rubric, and UI/endpoint description.
+
+---
+
+## D-044 — Findings subsystem (phase_dev_upgrade.md Phase 5)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 5 asks for a Findings subsystem on top of the Phase 3/4 engine: finding ID/test ID/category/severity/title/description/affected target/evidence/reproduction/timestamp/model-provider/status fields, OPEN/ACKNOWLEDGED/RESOLVED/RETEST_REQUIRED states, never deleting historical evidence on resolution, and a Finding→Test→Attack→Model response→Evidence→Reproduce detail UI.
+
+**Decision:**
+- New `Finding` SQLAlchemy model (`proxy/db/models.py`) — persisted (not in-memory), since findings must survive across runs and carry a real history. Rows are only ever updated (`status`/`updated_at`), never deleted.
+- New `proxy/findings.py`: `sync_findings(db, results)` opens a Finding only for `TestStatus.FAIL` results (`ERROR`/`INCONCLUSIVE` are test-health signals, not vulnerabilities — no finding). Dedup rule: skip if an OPEN/ACKNOWLEDGED/RETEST_REQUIRED finding already exists for that `test_id`; a RESOLVED finding that fails again gets a fresh row, old one untouched.
+- 4 new endpoints on `proxy/main.py`: `POST /v1/findings/sync` (run + persist), `GET /v1/findings` (list, optional `status` filter), `GET /v1/findings/{id}`, `PATCH /v1/findings/{id}` (status-only, 404 on missing id, 422 on an invalid status via `FindingPatch`'s `Literal`). The existing `POST /v1/security-tests/run` (Phase 4) is untouched — sync/list/detail are additive.
+- Status transitions are unrestricted (any state to any state via PATCH) — no state machine invented, since the spec doesn't require one and automatic pass→resolved transitions are explicitly Phase 7's job (baseline/regression comparison), not this phase's.
+- Frontend: `web/app/findings/page.tsx` (list + filter + sync button), `web/app/findings/[id]/page.tsx` (detail with the 5-tab drill-down: Test/Attack/Model response/Evidence/Reproduce, plus status-change buttons), `components/findings/finding-status-badge.tsx` (4 states, 4 distinct badge colors — same never-collapse-to-boolean principle as Phase 4's `TestStatus` badges).
+
+**Rationale:** Builds strictly on `TestResult` from Phase 3/4 without re-running or duplicating test logic. Persisting to SQLite (not in-memory) is required by "do not delete historical evidence" — an in-memory store can't survive a proxy restart and wouldn't count as a real history.
+
+**Consequence:** 11 new tests (`tests/test_findings.py`) covering FAIL-only creation, dedup, resolved-then-refails history preservation, the full endpoint flow, 404s, and invalid-status rejection. Full suite: 165 passed, 3 skipped (up from 154/3, zero regressions). Web: `tsc --noEmit` clean, vitest 13 passed (unchanged — no web unit tests added for the new pages, consistent with the project's existing pattern of Playwright e2e over component unit tests for full pages). `docs/FINDINGS.md` documents the model, states, dedup rule, and endpoints.
+
+---
+
+## D-045 — Security dashboard + persisted test-run history (phase_dev_upgrade.md Phase 6)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 6 requires a dashboard built on real backend data (total tests, passed, failed, errors, open findings, severity distribution, recent activity, affected models, test history) with explicit empty/loading/error states, no fake metrics, and no unnecessary exposure of sensitive test payloads. Gap found: nothing persisted PASS/ERROR/INCONCLUSIVE results — `Finding` only records FAILs (D-044) and `POST /v1/security-tests/run` is stateless (D-043). Without new persistence, "total tests / passed / history" could only have been faked, which the spec explicitly forbids.
+
+**Decision:**
+- New `TestRunResult` table (`proxy/db/models.py`): one row per test outcome per run, any status, grouped by a `run_id` (uuid4 per sync call). Chosen over adding status columns to `Finding` because findings are human-actionable vulnerabilities while this is execution telemetry — different lifecycles.
+- `proxy/findings.py::record_test_run(db, results)` logs every result; `POST /v1/findings/sync` now calls it alongside `sync_findings()`. `POST /v1/security-tests/run` stays stateless (the ad-hoc "check now" path).
+- `run_id` grouping means "total tests" = the latest run's count, not a cumulative sum that would inflate on every sync. Also the grouping Phase 7's baseline comparison will need — built now because the alternative (timestamp-equality grouping) doesn't actually work.
+- New `proxy/dashboard.py::build_dashboard_summary(db)` + `GET /v1/security-dashboard`. Aggregate-only: no `raw_input`/`raw_output`/evidence in the payload. Severity distribution is computed over *open findings* (current risk exposure), documented as such rather than left ambiguous.
+- Frontend: `web/components/security/dashboard-summary.tsx` mounted above the existing Live test run table on `/security` (existing functionality preserved, no new nav entry). `getSecurityDashboard()` deliberately breaks the codebase's usual never-throw-return-empty pattern, returning a discriminated `{status: "ok" | "error"}` — collapsing a fetch failure into an empty result would make Phase 6's required empty and error states indistinguishable.
+
+**Rationale:** The only honest way to satisfy "no fake metrics" for history-shaped metrics was to actually persist history. Everything else reuses what Phases 3-5 already built.
+
+**Consequence:** 7 new tests (`tests/test_dashboard_phase6.py`), including a regression test that raw attack payloads never appear in the dashboard response. Full suite: 172 passed, 3 skipped (up from 165/3, zero regressions). Web: `tsc --noEmit` clean, vitest 13 passed. `docs/SECURITY_DASHBOARD.md` documents every metric's source. Note: `/dashboard` (the older Eval dashboard over `CallLog` proxy traffic, D-028) is untouched and remains a separate page — it answers "what is the proxy doing", not "how secure is it".
+
+---
+
+## D-046 — Security regression testing (phase_dev_upgrade.md Phase 7)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 7 requires baseline creation, comparison of a later run against it, detection of newly-failing/newly-passing tests, new/resolved findings, changed severity, and changed provider config — with an explicit instruction not to make a "security score" the sole source of truth, individual results must stay accessible.
+
+**Decision:**
+- New `Baseline` table (`run_id` pointer only, no duplicated data — reuses D-045's `TestRunResult.run_id` grouping, which is exactly why that grouping was built in Phase 6 rather than deferred).
+- `proxy/regression.py::compare_runs()` is a pure function (two snapshot lists in, a diff dict out) — no DB/time dependency, so the comparison logic itself is trivially unit-testable without spinning up a session. `findings_delta()` separately pulls new/resolved findings since the baseline's timestamp, reusing D-044's `Finding` table rather than re-deriving finding state from the run diff.
+- No score field anywhere in the report. The report is bucketed counts (regressions/new_failures/fixed/unchanged/other_changes/severity_changes/added_tests/removed_tests/provider_config_changed) plus `per_test`, a full baseline-vs-current row per test — literal compliance with "the underlying individual test results must remain accessible."
+- 3 endpoints: `POST /v1/baselines` (409 if nothing has run yet — never creates an empty baseline), `GET /v1/baselines`, `GET /v1/regression-report` (404 no baseline / 409 no run to compare, both real distinguishable states, not generic 500s).
+- `web/app/regression/page.tsx`: create-baseline button, summary cards, regressions/fixed/findings-delta sections, full per-test table. `createBaseline()`/`getRegressionReport()` return discriminated ok/error results (same pattern as D-045) so "no baseline yet" renders its own explained state rather than a blank page.
+
+**Rationale:** Everything needed already existed after Phase 6 (`TestRunResult.run_id`, `Finding`) — Phase 7 is comparison logic and a pointer table, not new execution infrastructure.
+
+**Consequence:** 18 new tests (`tests/test_regression_phase7.py`), covering the pure comparator (regression/fix/unchanged/added/removed/severity-change/provider-change detection) independently from the DB-backed baseline/endpoint flow. Full suite: 190 passed, 3 skipped (up from 172/3, zero regressions). Web: `tsc --noEmit` clean, vitest 13 passed (unchanged). `docs/REGRESSION.md` documents the model and both endpoints.
+
+---
+
+## D-047 — CI/CD for security tests (phase_dev_upgrade.md Phase 8)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 8 requires a developer-friendly CLI/API workflow: select a target and a test suite, execute, produce machine- and human-readable results, enforce a configurable (never hardcoded) failure threshold, detect regressions, document GitHub Actions integration, and never require exposing provider API keys in source code.
+
+**Decision:**
+- `proxy/ci.py`: pure policy evaluation (`CIPolicy`, `evaluate()`, `matching_results()`, `format_human_summary()`) — no HTTP, no subprocess, so the pass/fail logic is unit-tested directly. Every threshold (`fail_on_statuses`, `fail_on_severities`, `max_failures`, `max_regressions`) is a dataclass field the caller sets; nothing is decided inside `evaluate()` itself.
+- `scripts/sentinel_ci.py`: thin CLI wrapper (argparse, stdlib) calling a target's `POST /v1/findings/sync` (records the run — reuses D-045's persistence, doesn't invent a second execution path) and optionally `GET /v1/regression-report` (D-046). Talks HTTP only — needs no provider API key, since the target instance already holds its own (D-041).
+- `_select_tests(category)` added to `proxy/main.py`; `POST /v1/security-tests/run` and `POST /v1/findings/sync` both gained an optional `category` query param (comma-separated) — "selecting a test suite" actually skips execution of unselected categories, not just filters the display.
+- `--json-out`/`--md-out` write the full result set + verdict (machine-readable) and the same Markdown the CLI prints to stdout (human-readable, `$GITHUB_STEP_SUMMARY`-ready).
+- `.github/workflows/security-tests.yml`: separate from `ci.yml` (that runs the unit test suites; this runs SentinelAI's own security tests against a booted instance). Its `--fail-on-severity critical,high` is a sample policy in the workflow file, not special-cased in the CLI — editable per repo.
+- Found and fixed a latent test-isolation bug while adding Phase 8's tests: `test_dashboard_phase6.py`/`test_regression_phase7.py`/`test_findings.py` only cleared their tables in `teardown_function`, not `setup_function` — harmless in isolation, but the shared `sqlite:///:memory:` engine (a process-wide singleton, `proxy/db/session.py`) let one file's leftover rows leak into another's "before anything has run" assertions depending on collection order. Fixed by clearing tables in both setup and teardown in all three files.
+
+**Rationale:** HTTP-only, no in-process imports of `proxy.main`, mirrors how a real CI job or a developer's laptop would reach a deployed instance — the same reason D-046's regression endpoints are HTTP, not a Python API.
+
+**Consequence:** 20 new tests (`tests/test_ci_phase8.py`) — pure policy logic, CLI with HTTP mocked, and the new `category` filter at the endpoint level — plus a real end-to-end smoke run against a live local `uvicorn` process (not just mocks) confirming exit code 0 on an all-passing suite. Full suite: 210 passed, 3 skipped (up from 190/3, zero regressions once the test-isolation fix landed). `docs/CI_CD.md` documents the policy flags, output formats, and the GitHub Actions workflow.
+
+---
+
+## D-048 — Agent security policy layer (phase_dev_upgrade.md Phase 9)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 9 asks to model an agent as Model/Tools/Permissions/Data sources/Actions, implement an explicit ALLOW/DENY/REQUIRE_APPROVAL tool-permission policy, track (agent, tool, requested action, policy decision, execution result), build the policy/evaluation layer first, and never implement real destructive actions as part of testing.
+
+**Decision:**
+- `proxy/agent_policy.py`: pure `evaluate(profile, request)`. Default deny; unregistered tool or data source → DENY; most-restrictive-wins among matching rules (DENY > REQUIRE_APPROVAL > ALLOW); canonicalized exact-match names; `*` only as a rule action wildcard, rejected in requests. (Tool-level wildcards in rules deliberately not supported — no need yet, and one less bypass surface.)
+- Profiles come only from server-side YAML (`proxy/agent_profiles.yaml`, `AGENT_PROFILES_PATH` setting, default resolved relative to the package so it's CWD-independent) — same server-side-config principle as D-041. One clearly-labelled example profile ships with it.
+- SentinelAI never executes a tool. `AgentActionLog.execution_result` records the policy-layer outcome (`blocked` / `allowed_not_executed` / `pending_approval` / `approved_not_executed` / `rejected`) — this is how "no destructive actions" is guaranteed structurally rather than by convention.
+- Human approval is a separate step (`POST /v1/agent-actions/{id}/approve|reject`): only pending rows (409 otherwise — a DENY can't be approved into an ALLOW), approver required (422), approver ≠ requesting agent (403). Approval is never read from the evaluate request body.
+- No UI and no `proxy/engine` plugin yet — explicitly deferred; spec asks for the policy layer first.
+
+**Rationale:** Pure core + thin persistence mirrors D-042/D-046/D-047 — the security-relevant logic is unit-testable without HTTP or DB. Structural no-execution is stronger than a "please don't" flag.
+
+**Consequence:** 32 new tests (`tests/test_agent_security_phase9.py`) covering authorized/unauthorized tool use, denied action, approval-required action, precedence, and 10+ bypass variants (case, whitespace, wildcard request, appended commands, prefix names, path smuggling, empty names, agent-supplied approval field, self-approval, approving a DENY, re-resolving). Full suite: 242 passed, 3 skipped (up from 210/3). `docs/AGENT_SECURITY.md`.
+
+---
+
+## D-049 — Runtime Gateway as a separate service (phase_dev_upgrade.md Phase 10)
+
+**Date:** 2026-09-23
+**Status:** Accepted (deployment shape: user said "go ahead" on the recommended option — separate app — 2026-09-23)
+
+**Context:** Phase 10 requires a separate gateway subsystem (request/response inspection, policy, allow/block, logging, audit events, provider routing), not coupled to the dashboard, stateless where practical, no raw sensitive content stored unless configured, never logging keys/tokens/secrets. It adds a new runtime service, which CLAUDE.md's User-Controlled Changes section requires surfacing first — done, recommended separate app accepted.
+
+**Decision:**
+- New top-level `gateway/` package with its own FastAPI app (`gateway.main:app`, port 8002). Imports SentinelAI's inspectors (`check_injection`, `check_pii`, `redact_pii`) and provider layer (`build_provider`, `get_provider`) as a library; does not import `proxy.main`, the DB, findings, or dashboard.
+- `gateway/pipeline.py::run_pipeline()` implements every stage; policy is a `GatewayPolicy` built from server-side settings (`GATEWAY_*`), actions `allow`/`redact`/`block` per direction.
+- Stateless: no DB writes, no rate limiting, no session state (tested: 20 repeated calls identical, `CallLog` count unchanged).
+- Audit events = JSON lines on `sentinelai.gateway.audit`, content as `{length, sha256}` only; raw text only when `GATEWAY_STORE_RAW_CONTENT=true`, and secrets redacted even then. Provider error messages withheld from both response and logs (tested with a key embedded in the upstream error).
+
+**Also this session — regression protection for earlier work (user request):**
+- Found a real Phase 2 regression: `web/components/playground/result-card.tsx` treated every 400 as an injection block, so D-041's new 400 `provider_credentials_missing` would have rendered as **"Not blocked"** with no output. Fixed by extracting `web/lib/classify-result.ts` (only a flagged injection is "blocked"; any other non-200 is "failed") + 5 vitest cases.
+- `tests/test_playground_regression_guard.py`: parses the *web's* actual presets (`web/lib/sample-attacks.ts`) and `SYSTEM_PROMPT` (`web/lib/api.ts`) from source; asserts web presets == Python mirror, every preset is blocked with its documented patterns, benign prompts with the real system prompt pass, and the system prompt would self-trip if scanned (proves D-033's guard is load-bearing).
+- Live-verified against a real proxy + real Groq key: all 4 presets 400 `injection_detected` with exact patterns; benign prompt 200 from Groq.
+
+**Consequence:** 18 gateway integration tests + 8 playground guard tests; full suite 268 passed, 3 skipped (up from 242/3). Web: `tsc` clean, vitest 18 passed (up from 13). Live gateway smoke: benign ALLOW via Groq, injection BLOCK, request email redacted before reaching the model, unknown route 400. `docs/GATEWAY.md`. Deployment config (`deploy/render.yaml`) not yet updated for a third Python service — flagged, not done.
+
+---
+
+## D-050 — Continuous monitoring: security event model (phase_dev_upgrade.md Phase 11)
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Phase 11 requires tracking attack attempts, blocked requests, policy violations, new findings, regressions, and suspicious tool activity in an event model separate from findings (not every event is a vulnerability), filterable by time/severity/application/model/category/event type, with retention/config controls.
+
+**Decision:**
+- New `SecurityEvent` table + `proxy/events.py` (`record_event`, `query_events`, `purge_expired`, `events_config`). No status field — events are observations. Metadata only; never prompt/response text or the PII/secret itself.
+- Emitters wired into existing flows in `proxy/main.py`: `/v1/generate` (injection → attack_attempt; rate-limit/oversize → request_blocked; inbound/outbound PII → policy_violation), `/v1/findings/sync` (new finding → finding_opened; regression vs newest baseline → regression_detected), agent endpoints (normal DENY → policy_violation; out-of-bounds request, self-approval, approving a DENY → suspicious_tool_activity).
+- `PolicyDecision` (D-048) gained a machine-readable `code` + `OUT_OF_BOUNDS_CODES`, so "suspicious" is classified from codes, not by parsing reason strings.
+- Gateway: optional `event_sink` in `run_pipeline`; `GATEWAY_RECORD_EVENTS` default **false**, preserving D-049's statelessness and its "writes nothing to the DB" test. Lazy import so the gateway doesn't touch the DB module unless enabled.
+- Controls: `EVENTS_ENABLED`, `EVENTS_RETENTION_DAYS` (default 30, 0 = forever; applied on proxy start and via `POST /v1/events/retention/apply`; only events purged), `EVENTS_MIN_SEVERITY`. `GET /v1/events/config`.
+- `record_event` never breaks the triggering request — failure logged + rolled back (explicit, per CLAUDE.md §11, not swallowed silently).
+- UI: `web/app/monitoring/page.tsx`.
+
+**Rationale:** Hooking existing decision points rather than adding a new inspection path means events can't drift from what the guardrails actually did.
+
+**Consequence:** 26 new tests (`tests/test_monitoring_phase11.py`). Full suite 294 passed, 3 skipped (stable across repeated runs). Web `tsc` clean, vitest 18 passed. Live-verified: playground presets still 400, benign still 200 via Groq with no event, events recorded and filterable. **Known pre-existing issue flagged, not fixed:** backend returns naive-UTC timestamps (SQLite `DateTime`), and every web page (`findings`, `dashboard`, `regression`, `monitoring`) passes them to `new Date()`, which reads them as local time — displayed times are offset by the viewer's UTC offset. Root fix is either timezone-aware serialization in the backend or one shared web parse helper; touches several files, so left for an explicit decision.
+
+---
+
+## D-051 — Fix: naive-UTC timestamps displayed offset by viewer timezone
+
+**Date:** 2026-09-23
+**Status:** Fixed (root cause, not per-page patches)
+
+**Context:** Flagged at the end of Phase 11: SQLite/SQLAlchemy `DateTime` columns store naive datetimes; `datetime.now(timezone.utc)` was written but read back without tzinfo, serialized without a UTC offset, and every web page's `new Date(iso_string)` then parsed it as *local* time — every displayed timestamp (findings, dashboard, regression, monitoring) was off by the viewer's UTC offset.
+
+**Decision:** New `UTCDateTime` `TypeDecorator` (`proxy/db/models.py`) replacing every `DateTime` column (8 columns across 6 models): strips tzinfo on write (converting to UTC first if aware), re-attaches `timezone.utc` on read. Every timestamp the API serializes now carries an explicit `+00:00`, so `new Date(...)` on the web side parses correctly with no frontend change needed anywhere.
+
+**Rationale:** A single type-level fix at the ORM boundary is smaller and can't be missed on a new column, unlike patching `new Date()` calls across 4+ web pages (or worse, only some of them).
+
+**Consequence:** New `tests/test_timestamps_utc.py` (5 tests: API round-trip, non-UTC input normalized to the same instant, aware-in/aware-out equality). Full suite 298 passed at the time of this fix (up from 294/3).
+
+---
+
+## D-052 — Phase 8-12 follow-through: closed open items, remediation guidance, reports
+
+**Date:** 2026-09-23
+**Status:** Accepted
+
+**Context:** Three items were flagged open after Phase 10/11 (deploy config, agent-security UI, agent engine plugin), plus a real gap found while scoping Phase 12: Findings never had the `remediation` field Phase 5 actually asked for. All closed together, then Phase 12 (reporting) built on top.
+
+**Decision:**
+- **`deploy/render.yaml`**: added `sentinelai-gateway` as its own Render web service — no disk (D-049's statelessness), own provider keys, `GATEWAY_RECORD_EVENTS` documented as requiring a shared `DATABASE_URL` if ever turned on (the proxy's local SQLite disk isn't shared). Pinned with a test asserting the service's `startCommand` module actually resolves to the gateway app, and its Groq key entry is `sync: false` with no committed value.
+- **`proxy/engine/plugins/agent_policy_tests.py`**: 9 new engine tests replaying D-048's bypass attempts (case/whitespace tricks, wildcard request, appended command, tool-prefix, unregistered data source, default-deny, approval-required-stays-gated, a control ALLOW case) against a fixed reference profile — not the operator's live `agent_profiles.yaml`, so the suite is deterministic regardless of what a deployment configures. A mutation test (swap in an always-ALLOW evaluator) proves the plugin actually fails when the policy is broken, not just always-passes.
+- **`web/app/agents/page.tsx`**: profile browser, live evaluate-an-action form, decision log with approve/reject (blocked client-side until an approver name is entered — server still enforces it).
+- **`proxy/remediation.py`** + `remediation_for()`: static per-category guidance, added to `Finding` API responses (`finding_to_dict`) and to every report row.
+- **Phase 12, `proxy/reports.py`**: executive + technical reports, built only from `test_run_results`/`findings`/`baselines`/`security_events` — generating one never runs a test. `scrub()` removes the server's configured provider keys by literal match plus runs `redact_pii` on every string, exempting `run_id` fields (digit-heavy uuids can false-match the phone regex). Executive report's `limitations` section is always populated and names INCONCLUSIVE/ERROR results explicitly — carries forward the spec's own "passing tests don't prove security" warning into the artifact itself, not just documentation.
+- `GET /v1/reports/executive` / `GET /v1/reports/technical`, `?format=md` for Markdown; `web/app/reports/page.tsx`.
+
+**Rationale:** Closing flagged debt before starting new work keeps `state.md`'s "open follow-ups" list from silently growing across phases (CLAUDE.md's own consistency rule). Remediation guidance and reports are naturally sequenced together — a report without remediation text would just restate raw evidence.
+
+**Consequence:** 20 new tests total (9 agent-policy-plugin + 1 render.yaml pin + Phase 12 tests counted separately below is fine — see per-file breakdown in progress_log.md). Full suite 318 passed, 3 skipped, stable across 3 consecutive runs (up from 298/3). Web: `tsc --noEmit` clean, vitest 18 passed (unchanged — reports/agents pages read-only against mocked-free live endpoints, following the project's existing pattern of Playwright/live verification over component unit tests for full pages). Live-verified end to end against the real proxy + real Groq key: playground presets still blocked, a benign prompt still answered, a full findings-sync → baseline → executive+technical report cycle produced correct output with the real configured Groq key absent from both the JSON and 16KB Markdown output.
+
+---
+
 ## Decision-writing rule
 
 When an open decision is resolved:
