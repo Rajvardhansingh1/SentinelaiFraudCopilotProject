@@ -118,3 +118,57 @@ database, no `User`/`Workspace`/`Project` table or foreign key anywhere in
 (`extract|policy_check|report|playground`), a fixed label describing the
 *kind* of call, not an isolated tenant/project. All findings, test runs,
 events, and baselines are global — every caller sees every row.
+
+## Security Engine
+
+Matches spec_V3.md §15's TEST DEFINITION → EXECUTION → EVALUATION → FINDING
+→ EVIDENCE separation closely (`proxy/engine/models.py`: `SecurityTest`,
+`RawExecution`, `TestResult`). Missing from spec_V3.md's chain: no
+"REMEDIATION RECOMMENDATION" step in the engine itself — remediation is
+generated separately, after the fact, from `Finding.category`
+(see Remediation below). `TestStatus` already has all 5 states
+(PASS/FAIL/ERROR/NOT_RUN/INCONCLUSIVE, spec_V3.md §16) — `NOT_RUN` is
+defined but never actually assigned anywhere (every registered test always
+executes when the suite runs one). Reproducibility exists via
+`TestResult.reproduction` (test_id + provider/model), matching spec_V3.md
+§15's requirement.
+
+## Findings
+
+`Finding` (`proxy/db/models.py`) already covers most of spec_V3.md §17's
+field list: id, test_id (→ "test ID"), category, severity, title,
+description, affected_target, evidence, reproduction, provider/model,
+status, created_at/updated_at, remediation. **Missing against spec_V3.md
+§17**: no `project` field (no project model exists at all — see Task 3), no
+explicit `impact` field (folded into `description`), no `likely_root_cause`
+field distinct from `description`), no `affected file/path` field, no
+`assessment/run ID` field on the Finding row itself (it exists only
+indirectly via the originating `TestRunResult.run_id`, not stored on
+`Finding`). Status model (`OPEN`/`ACKNOWLEDGED`/`RESOLVED`/`RETEST_REQUIRED`)
+differs from spec_V3.md §18's `OPEN`/`IN_PROGRESS`/`RESOLVED`/`ACCEPTED_RISK`
+— overlapping concepts, different vocabulary, would need an explicit
+decision to reconcile (CLAUDE.md's decision-log workflow, not a silent rename).
+
+## Remediation
+
+`proxy/remediation.py::remediation_for(category)` is a **static
+category→text lookup**, not project-aware. It does not use spec_V3.md
+§20's project architecture/framework/tool-definition context (none of that
+context exists without a project model), does not distinguish
+Observed/Analysis/Recommendation (spec_V3.md §23), and has no confidence
+categorization (spec_V3.md §24). It satisfies "a finding has remediation
+guidance" at the most basic level and nothing further in spec_V3.md
+§21/§25.
+
+## Dashboard
+
+`web/app/{security,findings,regression,monitoring,agents,reports,dashboard}`
+exist and are wired to real (non-fake) data per D-045's "no fake metrics"
+rule, satisfying spec_V3.md §60 for what exists today. **Missing against
+spec_V3.md §26**: no project switcher (no projects to switch between — see
+Task 3), no unified single-project overview page combining posture +
+findings + recommendations + recent assessments in one view (spec_V3.md
+§27) — today these are separate pages (Security dashboard, Findings,
+Monitoring) rather than one project-scoped overview. No Integrations page
+(spec_V3.md §56) — no SDK/CLI/credential concept exists to display (see
+Task 6).
