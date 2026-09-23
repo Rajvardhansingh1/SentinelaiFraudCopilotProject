@@ -74,7 +74,7 @@ from proxy.regression import (
 )
 from proxy.middleware.injection_detector import check_injection
 from proxy.middleware.pii_scanner import check_pii
-from proxy.middleware.rate_limiter import check_and_increment
+from proxy.middleware.rate_limiter import check_and_increment, check_auth_rate_limit
 from proxy.middleware.schema_validator import SchemaValidationFailed, validate_structured_output
 from proxy.provider import MissingCredentialsError, Provider, ProviderError, build_provider, get_provider
 from proxy.reports import build_executive_report, build_technical_report, executive_markdown, technical_csv, technical_markdown
@@ -166,8 +166,23 @@ def health():
     return {"status": "ok"}
 
 
+_AUTH_RATE_LIMIT = 10
+_AUTH_RATE_WINDOW_SECONDS = 60
+
+
+def _auth_rate_limit_or_429(request: Request) -> None:
+    """Phase 12 (D-059): signup/login had no rate limiting at all — an
+    unbounded credential-stuffing or signup-spam surface. Keyed by client IP,
+    a fixed window (not per-session like /v1/generate's limiter, which never
+    decays) so a shared IP recovers instead of being locked out forever."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_auth_rate_limit(client_ip, _AUTH_RATE_LIMIT, _AUTH_RATE_WINDOW_SECONDS):
+        raise HTTPException(status_code=429, detail={"code": "rate_limit_exceeded", "message": "Too many attempts. Try again shortly."})
+
+
 @app.post("/v1/auth/signup", response_model=AuthResponse)
-def signup(body: SignupRequest):
+def signup(body: SignupRequest, request: Request):
+    _auth_rate_limit_or_429(request)
     db = get_session()
     try:
         if db.query(User).filter(User.email == body.email).first() is not None:
@@ -183,7 +198,8 @@ def signup(body: SignupRequest):
 
 
 @app.post("/v1/auth/login", response_model=AuthResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, request: Request):
+    _auth_rate_limit_or_429(request)
     db = get_session()
     try:
         user = db.query(User).filter(User.email == body.email.lower()).first()

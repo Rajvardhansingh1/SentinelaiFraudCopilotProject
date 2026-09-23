@@ -966,12 +966,83 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 - Data model: `User` → one `Workspace` (auto-created on signup, no cross-user workspace sharing — nothing in Phase 2 asks for it) → many `Project`. Every existing content table (`CallLog`, `Finding`, `TestRunResult`, `AgentActionLog`, `SecurityEvent`, `Baseline`) gained a nullable `project_id` FK, added via an additive `ALTER TABLE` migration run after `create_all()` (no Alembic — matches the project's existing no-migration-tool convention).
 - A global FastAPI middleware requires a bearer token on every route except `/health`, `/docs`, `/redoc`, `/openapi.json`, `/v1/auth/signup`, `/v1/auth/login`.
 - Project isolation is enforced through one choke point, `proxy/projects.py::owned_project()` — 404 (never 403) on any mismatch, so a project ID's existence is never confirmed to someone who doesn't own it.
-- Only the core data paths spec_V3.md §67 Phase 2 names were retrofitted to be project-scoped this pass: `/v1/generate`, `/v1/findings/*`, `/v1/security-dashboard`, `/v1/calls`. Agent policy (`/v1/agents/*`, `/v1/agent-actions/*`), baselines/regression (`/v1/baselines`, `/v1/regression-report`), events (`/v1/events*`), and reports (`/v1/reports/*`) remain globally-authenticated via the middleware but are **not yet project-scoped** — a deliberate, tracked scoping gap, not a silent one, left for a later phase since spec_V3.md doesn't require it in Phase 2.
-- A known consequence of the baseline gap above: `/v1/findings/sync`'s regression-detection lookup still finds the newest baseline across *all* projects, not just the caller's — because `create_baseline()` doesn't set `project_id` yet. Scoping both together is the correct fix; scoping one without the other would silently break regression detection for every project.
+- Only the core data paths spec_V3.md §67 Phase 2 names were retrofitted to be project-scoped in the first pass: `/v1/generate`, `/v1/findings/*`, `/v1/security-dashboard`, `/v1/calls`. **Update (same day, see D-056 below):** the remaining scoping gap (agent policy, baselines/regression, events, reports) was closed the same day, not left open — see D-056.
 
 **Rationale:** JWT over server-side sessions because the proxy is meant to run stateless behind a load balancer (spec_V3.md's cloud deployment target) with no shared session store. The `owned_project()` choke point exists so isolation logic is written once and reused, not re-implemented per endpoint.
 
-**Consequence:** Breaking change for every existing unauthenticated caller (web playground, CLI, old test suite) — expected and necessary, not accidental. All 16 affected test files were retrofitted to sign up a user and create a project via a new shared `tests/auth_helpers.py::auth_headers_and_project()` helper; full suite is green (327 passed, 3 skipped, 0 failed, 0 regressions). `.env.example` and `deploy/render.yaml` gained `JWT_SECRET`/`JWT_EXPIRY_HOURS`; the app refuses to start in production without `JWT_SECRET` set. Frontend (web playground) login UI and updated API calls are not yet built — still open.
+**Consequence:** Breaking change for every existing unauthenticated caller (web playground, CLI, old test suite) — expected and necessary, not accidental. All 16 affected test files were retrofitted to sign up a user and create a project via a new shared `tests/auth_helpers.py::auth_headers_and_project()` helper; full suite is green (327 passed, 3 skipped, 0 failed, 0 regressions). `.env.example` and `deploy/render.yaml` gained `JWT_SECRET`/`JWT_EXPIRY_HOURS`; the app refuses to start in production without `JWT_SECRET` set.
+
+---
+
+## D-056 — Phase 3 (execution_source) + closing D-055's project-scoping gap
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** User asked to complete spec_V3.md end to end, not stop at Phase 2. D-055 had deliberately left baselines/regression, events, reports, and agent actions unscoped by project.
+
+**Decision:**
+- `TestRunResult` gains `execution_source` (`dashboard|local_sdk|cli|api|ci_cd|gateway`, default `dashboard`), threaded through `record_test_run()`, `/v1/findings/sync?source=`, the dashboard's recent activity, and the technical report — satisfies Phase 3's "execution source is recorded."
+- Baselines/regression fully project-scoped: `create_baseline()` and `/v1/regression-report` take `project_id`; a caller-supplied `run_id` on `/v1/regression-report` is verified to belong to the requesting project before use (otherwise a guessed/leaked `run_id` from another project could pull its data in — caught during this pass, not shipped).
+- `/v1/events`, `/v1/events/retention/apply`'s reads, and `/v1/reports/{executive,technical}` are now project-scoped the same way. Agent actions gained an *optional* `project_id` (agent profiles remain global config, not 1:1 with projects — nothing asks for that yet).
+- Added a CSV format to the technical report (Phase 10 §41).
+
+**Rationale:** Scoping was closed in the same session as D-055 rather than left as permanent debt — spec_V3.md §9's isolation guarantee is meaningless if half the subsystems ignore it.
+
+**Consequence:** Full suite: 331 passed, 3 skipped, 0 failed (4 new execution_source tests).
+
+---
+
+## D-057 — Phase 5: structured remediation intelligence
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** `proxy/remediation.py` (from the earlier `phase_dev_upgrade.md` work) returned one flat string per category. spec_V3.md §21-25 requires facts and inference to be visibly distinct (Observed/Analysis/Recommendation), a non-fabricated confidence level, and project-specific detail where Sentinel can actually verify it.
+
+**Decision:** `remediation_for(category)` now returns a structured object (`observed`, `analysis`, `security_impact`, `expected_fix`, `why_it_addresses`, `components_to_review`, `additional_controls`, `verification_guidance`, `confidence`) instead of a string. Still static/rule-based, no LLM call — confidence is fixed per category because the category→component mapping is a fact about this codebase, not a probabilistic judgment. `components_to_review` points at SentinelAI's own guardrail code (`proxy/...`), since that's what this engine actually tests — not a fabricated guess at an external project's source, honoring §20's "if Sentinel cannot verify a project detail, say so."
+
+**Rationale:** A flat string can't distinguish "this is what happened" from "this is my inference," which §23 explicitly forbids conflating.
+
+**Consequence:** Breaking API shape change: `Finding.remediation` (and report `remediation` fields) are now an object, not a string — `web/lib/types.ts` and the finding-detail page were updated to match. Reports' markdown/CSV output updated accordingly. 3 new tests (`tests/test_remediation.py`); full suite unaffected (existing tests only checked truthiness, not the string).
+
+---
+
+## D-058 — Phase 9: project-scoped API keys; Phase 8: persistent CLI credentials
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** External submissions (CI, SDK, a service integration) were forced through a full user JWT — `scripts/sentinel_ci.py` was bootstrapping a throwaway user + project on *every single run*, which is not a real "project association" (Phase 8's ask) and not a credential scoped narrower than a full account (Phase 9's "scoped credentials" ask).
+
+**Decision:**
+- New `ProjectAPIKey` (sha256-hashed, never bcrypt — these are high-entropy random tokens, not low-entropy passwords, so bcrypt's slowness buys nothing). Raw key shown exactly once, at creation.
+- `POST/GET/DELETE /v1/projects/{id}/api-keys` manage keys, gated by a full user bearer token only (managing credentials needs the stronger credential).
+- New `Authorization: ApiKey <key>` scheme, resolved by `proxy/projects.py::require_project_or_api_key()`, accepted **only** by `/v1/findings/sync` and `/v1/regression-report` — the two endpoints an external CI/SDK actually calls. Every other endpoint keeps requiring a full bearer token; verified by test that an API key is rejected everywhere else.
+- The global auth middleware now accepts either `bearer` or `apikey` scheme as "some plausible credential present" — the *specific* scheme an endpoint accepts is still enforced by that endpoint's own dependency (`get_current_user` only parses `Bearer`, so an `ApiKey` header is transparently rejected by every endpoint that never opted in).
+- `scripts/sentinel_ci.py` gained `--api-key`/`--project-id` (or `SENTINEL_API_KEY`/`SENTINEL_PROJECT_ID`), falling back to the old throwaway-account bootstrap when neither is given.
+
+**Rationale:** A credential scoped to one project is strictly safer to hand to a CI pipeline than a full user account token — a leaked CI secret can't be used to log in, change the password, or touch any other project.
+
+**Consequence:** Live smoke test against a real proxy surfaced a real bug: `_fetch_regression_report()` was missing the now-required `project_id` query param entirely (the mocked unit tests never caught it because they don't validate real query-param requirements). Fixed in the same pass. 11 new tests (`tests/test_api_keys.py`). Full suite: 345 passed, 3 skipped, 0 failed.
+
+---
+
+## D-059 — Phase 12: auth-endpoint rate limiting + dedicated auth/isolation tests
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** A Phase 12 hardening review found `/v1/auth/signup` and `/v1/auth/login` had zero rate limiting — an open credential-stuffing and signup-spam surface. There was also no dedicated test file for auth itself (every other test file only *used* auth via `tests/auth_helpers.py`'s happy path).
+
+**Decision:**
+- `proxy/middleware/rate_limiter.py` gained a second, separate limiter (`check_auth_rate_limit`): a fixed time window that actually expires, unlike the existing per-session counter (`check_and_increment`) which never decays — correct for `/v1/generate`'s one-run-per-demo-session use case, wrong for an IP-keyed auth limiter (a shared/NAT IP would eventually be locked out forever otherwise).
+- `/v1/auth/signup` and `/v1/auth/login` both call it, keyed by client IP, 10 attempts/minute.
+- New `tests/test_auth.py`: signup validation (weak password, bad email, duplicate email), login (same error for wrong password vs. nonexistent user), token handling (missing/garbage/expired/deleted-user), cross-project isolation (a second user's dashboard/findings/calls/project-detail requests against the first user's `project_id` all 404), and the new rate limiter itself.
+
+**Rationale:** Auth endpoints are the one place per-IP abuse actually matters on this proxy — every other endpoint already requires a valid token, which is a much stronger gate than an IP.
+
+**Consequence:** `tests/auth_helpers.py` now resets the auth rate limiter before each module's bootstrap signup — without it, the ~30 test modules sharing one `TestClient` "testclient" host would exhaust the real 10/minute quota partway through a full suite run (caught immediately by running the suite, not shipped). 15 new tests. Full suite: 360 passed, 3 skipped, 0 failed.
 
 ---
 
