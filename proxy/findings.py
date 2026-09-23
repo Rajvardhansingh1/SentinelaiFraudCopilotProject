@@ -99,11 +99,17 @@ def sync_findings(db: Session, results: list[TestResult], project_id: int | None
     return created
 
 
-def record_test_run(db: Session, results: list[TestResult], project_id: int | None = None) -> str:
+EXECUTION_SOURCES = {"dashboard", "local_sdk", "cli", "api", "ci_cd", "gateway"}
+
+
+def record_test_run(
+    db: Session, results: list[TestResult], project_id: int | None = None, execution_source: str = "dashboard"
+) -> str:
     """Phase 6 (D-045): logs every result (any status) under one shared
     run_id, so the dashboard has real history — separate from `Finding`,
     which only tracks FAILs needing human action. Phase 2 (D-055): tagged
-    with project_id so per-project dashboards/history are possible."""
+    with project_id so per-project dashboards/history are possible.
+    Phase 3 (D-056): tagged with execution_source — where the run came from."""
     run_id = str(uuid.uuid4())
     for result in results:
         db.add(
@@ -117,6 +123,7 @@ def record_test_run(db: Session, results: list[TestResult], project_id: int | No
                 provider=result.evidence.provider,
                 model=result.evidence.model,
                 executed_at=result.executed_at,
+                execution_source=execution_source if execution_source in EXECUTION_SOURCES else "dashboard",
             )
         )
     db.commit()

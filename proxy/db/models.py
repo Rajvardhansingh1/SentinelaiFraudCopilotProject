@@ -130,6 +130,11 @@ class TestRunResult(Base):
     status: Mapped[str] = mapped_column(String)
     provider: Mapped[str] = mapped_column(String)
     model: Mapped[str] = mapped_column(String)
+    # Phase 3 (D-056): where this run was triggered from — dashboard | local_sdk
+    # | cli | api | ci_cd | gateway. Defaults to "dashboard" (the UI-triggered
+    # /v1/findings/sync path); external callers (scripts/sentinel_ci.py, a
+    # future SDK) pass their own.
+    execution_source: Mapped[str] = mapped_column(String, default="dashboard")
     executed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 

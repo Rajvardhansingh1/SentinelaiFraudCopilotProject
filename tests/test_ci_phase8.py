@@ -185,7 +185,7 @@ def test_cli_passes_category_filter_as_query_param(monkeypatch):
     monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([], capture=captured))
 
     sentinel_ci.main(["--target", "http://fake", "--category", "jailbreak,prompt_injection"])
-    assert captured["params"] == {"project_id": 1, "category": "jailbreak,prompt_injection"}
+    assert captured["params"] == {"project_id": 1, "source": "ci_cd", "category": "jailbreak,prompt_injection"}
 
 
 # --- endpoint-level test-suite selection (D-047) ---

@@ -254,18 +254,21 @@ def run_security_tests(category: str | None = None):
 
 
 @app.post("/v1/findings/sync")
-def sync_security_findings(category: str | None = None, project: Project = Depends(require_project)):
+def sync_security_findings(category: str | None = None, source: str = "dashboard", project: Project = Depends(require_project)):
     """Phase 5 (D-044): runs the full engine suite and opens a Finding for any
     FAIL result that doesn't already have an open one for the same test_id.
     Phase 6 (D-045): also logs every result (any status) to TestRunResult so
     the dashboard has real history to show — the only place that happens.
     Phase 8 (D-047): optional `category` filter selects a test suite.
-    Phase 2 (D-055): requires `?project_id=`, scopes everything written to it."""
+    Phase 2 (D-055): requires `?project_id=`, scopes everything written to it.
+    Phase 3 (D-056): optional `source` (dashboard|local_sdk|cli|api|ci_cd|gateway)
+    records where the run was triggered from; unrecognized values fall back
+    to "dashboard" rather than rejecting the request."""
     results = run_suite(_select_tests(category))
     db = get_session()
     try:
         created = sync_findings(db, results, project_id=project.id)
-        run_id = record_test_run(db, results, project_id=project.id)
+        run_id = record_test_run(db, results, project_id=project.id, execution_source=source)
 
         # Phase 11 (D-050): monitoring events — observations, not new findings.
         for f in created:

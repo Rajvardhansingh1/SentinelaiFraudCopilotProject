@@ -36,6 +36,13 @@ _TABLES_NEEDING_PROJECT_ID = [
     "baselines",
 ]
 
+# Phase 3 (D-056): additive columns added to already-existing tables after
+# they first shipped. Same pattern as _TABLES_NEEDING_PROJECT_ID above —
+# nullable/defaulted, never a destructive schema change.
+_ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
+    ("test_run_results", "execution_source", "VARCHAR DEFAULT 'dashboard'"),
+]
+
 
 def _migrate_add_project_id_columns() -> None:
     inspector = inspect(_engine)
@@ -47,6 +54,12 @@ def _migrate_add_project_id_columns() -> None:
             columns = {c["name"] for c in inspector.get_columns(table)}
             if "project_id" not in columns:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN project_id INTEGER"))
+        for table, column, ddl_type in _ADDITIVE_COLUMNS:
+            if table not in existing_tables:
+                continue
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            if column not in columns:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
 
 
 def init_db() -> None:

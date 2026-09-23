@@ -206,6 +206,7 @@ def build_technical_report(db: Session, since: datetime | None = None, until: da
                 "provider": r.provider,
                 "model": r.model,
                 "executed_at": r.executed_at,
+                "execution_source": r.execution_source,
                 "reproduction": {
                     "run_id": r.run_id,
                     "command": f"POST /v1/security-tests/run?category={r.category}",

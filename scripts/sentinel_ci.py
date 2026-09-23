@@ -43,7 +43,7 @@ def _bootstrap_auth(target: str) -> dict:
 
 
 def _fetch_results(target: str, category: str | None, auth: dict) -> list[dict]:
-    params = {"project_id": auth["project_id"]}
+    params = {"project_id": auth["project_id"], "source": "ci_cd"}
     if category:
         params["category"] = category
     resp = requests.post(f"{target}/v1/findings/sync", params=params, headers=auth["headers"], timeout=120)

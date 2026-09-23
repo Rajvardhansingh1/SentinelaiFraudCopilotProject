@@ -66,6 +66,7 @@ def build_dashboard_summary(db: Session, project_id: int | None = None) -> dict:
                 "provider": r.provider,
                 "model": r.model,
                 "executed_at": r.executed_at,
+                "execution_source": r.execution_source,
             }
             for r in recent_activity
         ],
