@@ -91,3 +91,21 @@ SQLite (`DATABASE_URL`), single file, no per-tenant partitioning. Tables
 Every table's rows are globally visible to whoever can reach the API —
 there is no row-level isolation because there is no tenant/user/project
 identity anywhere in the schema.
+
+## Authentication
+
+**None exists.** No signup, login, logout, session, password hashing, JWT,
+or OAuth code anywhere in the repository (confirmed via
+`grep -rniE "login|signup|sign_up|session|jwt|oauth|password|bcrypt|passlib" proxy/ gateway/ agents/ web/lib web/app --include="*.py" --include="*.ts" --include="*.tsx"`
+— only false-positive matches on `session_id`, a per-request correlation
+string unrelated to authentication, and `get_session()`/`session.py` which
+are SQLAlchemy database-session utilities). Every endpoint in `proxy/main.py`
+and `gateway/main.py` is open to any caller that can reach the port.
+
+## Authorization
+
+**None exists.** There is no user identity, so there is no concept of
+"authorized project access" to test. `ALLOWED_ORIGINS` (CORS) restricts
+which *browser origins* may call the API — it is not authorization, it does
+not restrict *who* behind an allowed origin can act, and it does nothing
+for server-to-server/API/CI callers.
