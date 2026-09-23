@@ -224,3 +224,46 @@ detection (`--check-regression` against `/v1/regression-report`). Documented
 in `docs/CI_CD.md` with a working `.github/workflows/security-tests.yml`.
 **Gap**: "selecting project" (spec_V3.md §37) has no meaning yet — there is
 one global target, not a project to select.
+
+## Reports
+
+`proxy/reports.py` builds executive and technical reports (spec_V3.md §40)
+from stored data only, with `scrub()` removing configured provider keys and
+PII before output — satisfies spec_V3.md §41's "no secrets in any report
+format" for the JSON/Markdown formats it supports today. **Gap against
+spec_V3.md §41**: no PDF or CSV format exists, only JSON and Markdown.
+**Gap against spec_V3.md §42**: report scope is implicitly global
+(`since`/`until` time-range only) — there is no "single target" or "single
+project" scope option because no target/project model exists (see Task 3).
+
+## Monitoring
+
+`SecurityEvent` (spec_V3.md §43's EVENT) is already a model distinct from
+`TestRunResult` (TEST RESULT) and `Finding` (FINDING) — the three-way
+distinction spec_V3.md §43 asks for already exists and is enforced (an
+attack attempt never auto-creates a Finding; D-050). Filtering by time,
+severity, application, model, category, event type exists
+(`GET /v1/events`). No "trends" visualization exists yet (spec_V3.md §11
+mentions trends only loosely; not a hard Phase 1 requirement).
+
+## Local-Only vs Cloud-Connected Mode
+
+**Not applicable in current form.** There is no "cloud" deployment of
+SentinelAI as a multi-tenant service to be local-only *instead of* — the
+existing local run and the existing Render deployment config
+(`deploy/render.yaml`) are the same single-tenant software running in two
+places, not two distinct modes a user chooses between with different sync
+behavior (spec_V3.md §38-39 presume a multi-tenant cloud product with a
+toggle against local execution, which does not exist yet).
+
+## Existing Test Coverage
+
+321 tests collected in 3.56s. Coverage spans: guardrails (injection/PII), provider
+abstraction/BYOK, security engine + all 5 attack categories, findings,
+dashboard, regression, CI policy, agent tool-policy (including bypass
+attempts), monitoring events, reports, gateway pipeline, and a UTC-timestamp
+regression guard. **Gap against spec_V3.md §58-59**: zero tests exist for
+signup/login/logout/session expiration, authorized-vs-unauthorized project
+access, or cross-project access attempts — because none of those concepts
+exist yet (Tasks 2-3). These become required only once Phase 2 introduces
+auth/projects; they are not a Phase 1 defect.
