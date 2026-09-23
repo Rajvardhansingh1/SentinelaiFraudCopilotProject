@@ -917,6 +917,23 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 
 ## Decision-writing rule
 
+## D-054 — Fix: Presidio false-positives on non-PII entity types; redact_pii silently not redacting Presidio-only matches
+
+**Date:** 2026-09-24
+**Status:** Fixed (real, pre-existing production bug — found while diagnosing a GitHub Actions CI failure, not introduced by this session's other work)
+
+**Context:** GitHub Actions CI was failing on `main` itself (confirmed: same job/step fails on the exact commit `main` was already at, before any of this session's branches existed). Reproduced locally by installing `requirements.txt` fresh into a clean venv (mirroring what CI's `pip install -r requirements.txt` does every run, vs. this session's long-lived local venv which had older resolved versions since `requirements.txt` pins no versions). The failure: `tests/test_monitoring_phase11.py::test_benign_request_emits_no_event` — asking "What is the capital of France?" produced a `policy_violation` / `sensitive_data_inbound` event. Root cause: `proxy/middleware/pii_scanner.py::_presidio_types()` treated *every* Presidio-detected entity type as PII with no filtering, including `LOCATION` — a fresh `presidio-analyzer` install correctly initializes (this session's stale local venv apparently had it silently failing to initialize, masking the issue) and flags country/city names as `LOCATION`. This is a real bug that would affect actual users in production, not a test-only artifact: any message mentioning a place, a date, a nationality, or containing a URL was being treated as containing sensitive data.
+
+**Decision:**
+- `_presidio_types()`/new `_presidio_results()` now filter to an explicit allowlist of genuinely identifying entity types (`person`, `email_address`, `phone_number`, `credit_card`, `us_ssn`, `ip_address`, etc.) — excluding Presidio's broad "context" categories (`LOCATION`, `DATE_TIME`, `NRP`, `URL`, and similar) that were never real PII.
+- Second bug found and fixed in the same function while investigating: `redact_pii()` computed `redacted=True` from `check_pii().found` but only actually replaced text matching the four `PATTERNS` regexes — any PII detected *only* by Presidio (e.g. a person's name, which has no regex pattern) was left untouched in the returned text while the result still claimed `redacted=True`. This is live in both `gateway/pipeline.py`'s PII-redact policy path and `proxy/reports.py::scrub()`. Fixed: `redact_pii()` now builds a unified span list (regex matches + Presidio matches using Presidio's own `start`/`end` offsets) and does a single left-to-right substitution pass over the original text, so every claimed redaction is a real one.
+
+**Rationale:** Filtering happens at the entity-type layer (a data allowlist), not by disabling Presidio or lowering its confidence threshold — keeps the detector's actual NER capability intact for the entity types that are genuinely identifying, per D-016's original intent.
+
+**Consequence:** 7 new tests in `tests/test_pii_scanner.py` pin both fixes (LOCATION/DATE_TIME/NRP/URL not flagged, US_SSN still flagged, Presidio-only spans actually stripped, mixed regex+Presidio spans both stripped in one pass) — using a fake analyzer so the tests are deterministic regardless of which real Presidio/spaCy versions are installed in whatever venv runs them. Verified against both this session's long-lived local venv and a freshly-installed venv (matching what actually broke CI) — 327 passed, 3 skipped in both, no regressions. This fix is independent of and should land ahead of the V3 Phase 1 baseline and Supabase-migration branches in flight — it's a correctness/security fix unrelated to either.
+
+---
+
 When an open decision is resolved:
 1. Add a dated decision entry.
 2. Mark the OD item resolved.
