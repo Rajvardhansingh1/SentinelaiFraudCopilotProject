@@ -172,3 +172,17 @@ findings + recommendations + recent assessments in one view (spec_V3.md
 Monitoring) rather than one project-scoped overview. No Integrations page
 (spec_V3.md §56) — no SDK/CLI/credential concept exists to display (see
 Task 6).
+
+## Provider Abstraction and BYOK
+
+Matches spec_V3.md §12-13 well at the mechanism level: `PROVIDER_REGISTRY`
+(`proxy/provider.py`) keeps the security engine provider-agnostic (spec_V3.md
+§13), and `GenerateRequest.provider_config.api_key` already implements
+per-request BYOK — server-side only, never logged, `MissingCredentialsError`
+raised before any SDK/network call (satisfies spec_V3.md §12's BYOK
+credential rules). **Gap against spec_V3.md §12**: "Sentinel-managed
+inference" as a *user-facing choice* doesn't exist as a concept, because
+there is no user/account to own a choice between BYOK and managed — today
+there is only one mode: the server's own `.env` keys are the implicit
+default, indistinguishable from a notional "managed" tier since there is no
+tiering, billing, or per-user quota.
