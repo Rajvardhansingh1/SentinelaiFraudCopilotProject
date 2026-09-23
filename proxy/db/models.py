@@ -184,6 +184,25 @@ class SecurityEvent(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class ProjectAPIKey(Base):
+    """Phase 9 (D-058): a scoped credential for external submissions (CI,
+    SDK, a service integration) — bound to exactly one project, never a
+    user's full account. Only the sha256 hash is stored; the raw key is
+    shown once, at creation, and never again (same principle as a password:
+    the server never needs the plaintext back)."""
+
+    __tablename__ = "project_api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    key_hash: Mapped[str] = mapped_column(String, unique=True, index=True)
+    key_prefix: Mapped[str] = mapped_column(String)  # first 12 chars, shown in listings so a key is identifiable
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
 class Baseline(Base):
     """Phase 7 (D-046): a named security baseline pinned to one
     TestRunResult.run_id. Later runs are compared against it. The baseline

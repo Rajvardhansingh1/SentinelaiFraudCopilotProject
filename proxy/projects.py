@@ -7,10 +7,10 @@ in Phase 2 asks for."""
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from proxy.auth import get_current_user
+from proxy.auth import decode_token, get_current_user
 from proxy.db.models import Project, User, Workspace
 from proxy.db.session import get_session
 
@@ -63,6 +63,40 @@ def require_project(project_id: int, user: User = Depends(get_current_user)) -> 
     db = get_session()
     try:
         project = owned_project(db, project_id, user)
+        db.expunge(project)
+        return project
+    finally:
+        db.close()
+
+
+def require_project_or_api_key(request: Request, project_id: int) -> Project:
+    """Like require_project, but also accepts `Authorization: ApiKey <key>` —
+    a project-scoped credential (Phase 9, D-058) for external submissions
+    (CI/SDK/service integrations) that shouldn't need a full user account.
+    Self-contained rather than composing get_current_user() as a Depends,
+    since that dependency is bearer-only and this needs to branch on scheme
+    before FastAPI's DI resolves anything. 404, not 403, if the key's own
+    project doesn't match the requested project_id — same non-enumeration
+    principle as owned_project()."""
+    auth_header = request.headers.get("authorization", "")
+    db = get_session()
+    try:
+        if auth_header.lower().startswith("apikey "):
+            from proxy.api_keys import verify_api_key  # local import: avoid a proxy.auth <-> proxy.api_keys cycle
+
+            project = verify_api_key(db, auth_header[7:].strip())
+            if project is None:
+                raise HTTPException(status_code=401, detail={"code": "invalid_api_key", "message": "Invalid or revoked API key."})
+            if project.id != project_id:
+                raise HTTPException(status_code=404, detail={"code": "project_not_found", "message": "No such project."})
+        elif auth_header.lower().startswith("bearer "):
+            user_id = decode_token(auth_header[7:].strip())
+            user = db.query(User).filter(User.id == user_id).first()
+            if user is None:
+                raise HTTPException(status_code=401, detail={"code": "user_not_found", "message": "Token references a deleted account."})
+            project = owned_project(db, project_id, user)
+        else:
+            raise HTTPException(status_code=401, detail={"code": "not_authenticated", "message": "Missing bearer token or API key."})
         db.expunge(project)
         return project
     finally:

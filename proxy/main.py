@@ -54,7 +54,15 @@ from proxy.events import (
     record_event,
 )
 from proxy.findings import FindingPatch, finding_to_dict, record_test_run, sync_findings
-from proxy.projects import ProjectCreate, create_workspace_for_user, owned_project, project_to_dict, require_project
+from proxy.api_keys import ApiKeyCreate, api_key_to_dict, create_api_key, revoke_api_key
+from proxy.projects import (
+    ProjectCreate,
+    create_workspace_for_user,
+    owned_project,
+    project_to_dict,
+    require_project,
+    require_project_or_api_key,
+)
 from proxy.regression import (
     BaselineCreate,
     baseline_to_dict,
@@ -111,7 +119,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -123,15 +131,22 @@ _PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/v1/auth/signup
 
 @app.middleware("http")
 async def require_auth(request: Request, call_next):
+    """Gate: some plausible credential must be present. Which scheme an
+    endpoint actually accepts (bearer-only, or bearer-or-apikey per Phase 9's
+    require_project_or_api_key) is enforced by that endpoint's own
+    dependency, not here — this middleware only rejects requests carrying
+    neither."""
     if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS:
         return await call_next(request)
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
-        return JSONResponse(status_code=401, content={"detail": {"code": "not_authenticated", "message": "Missing bearer token."}})
-    try:
-        decode_token(auth_header[7:])
-    except HTTPException as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    scheme = auth_header.split(" ", 1)[0].lower() if auth_header else ""
+    if scheme == "bearer":
+        try:
+            decode_token(auth_header[7:])
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    elif scheme != "apikey":
+        return JSONResponse(status_code=401, content={"detail": {"code": "not_authenticated", "message": "Missing bearer token or API key."}})
     return await call_next(request)
 
 
@@ -220,6 +235,47 @@ def get_project(project: Project = Depends(require_project)):
     return project_to_dict(project)
 
 
+@app.post("/v1/projects/{project_id}/api-keys")
+def create_project_api_key(body: ApiKeyCreate, project: Project = Depends(require_project)):
+    """Phase 9 (D-058): the raw key is returned exactly once, here — the
+    server never stores or shows it again. Managing keys requires the full
+    user account (not another API key), same as any other project setting."""
+    db = get_session()
+    try:
+        row, raw_key = create_api_key(db, project.id, body.name)
+        return {**api_key_to_dict(row), "key": raw_key}
+    finally:
+        db.close()
+
+
+@app.get("/v1/projects/{project_id}/api-keys")
+def list_project_api_keys(project: Project = Depends(require_project)):
+    db = get_session()
+    try:
+        from proxy.db.models import ProjectAPIKey
+
+        rows = (
+            db.query(ProjectAPIKey)
+            .filter(ProjectAPIKey.project_id == project.id)
+            .order_by(ProjectAPIKey.created_at.desc())
+            .all()
+        )
+        return [api_key_to_dict(k) for k in rows]
+    finally:
+        db.close()
+
+
+@app.delete("/v1/projects/{project_id}/api-keys/{key_id}")
+def revoke_project_api_key(key_id: int, project: Project = Depends(require_project)):
+    db = get_session()
+    try:
+        if not revoke_api_key(db, project.id, key_id):
+            raise HTTPException(status_code=404, detail={"code": "api_key_not_found", "message": "No such API key."})
+        return {"revoked": True}
+    finally:
+        db.close()
+
+
 @app.get("/quota")
 def quota():
     """D-020 footnote extended: 'N' is our own call count, not a real provider-side
@@ -254,7 +310,7 @@ def run_security_tests(category: str | None = None):
 
 
 @app.post("/v1/findings/sync")
-def sync_security_findings(category: str | None = None, source: str = "dashboard", project: Project = Depends(require_project)):
+def sync_security_findings(category: str | None = None, source: str = "dashboard", project: Project = Depends(require_project_or_api_key)):
     """Phase 5 (D-044): runs the full engine suite and opens a Finding for any
     FAIL result that doesn't already have an open one for the same test_id.
     Phase 6 (D-045): also logs every result (any status) to TestRunResult so
@@ -263,7 +319,10 @@ def sync_security_findings(category: str | None = None, source: str = "dashboard
     Phase 2 (D-055): requires `?project_id=`, scopes everything written to it.
     Phase 3 (D-056): optional `source` (dashboard|local_sdk|cli|api|ci_cd|gateway)
     records where the run was triggered from; unrecognized values fall back
-    to "dashboard" rather than rejecting the request."""
+    to "dashboard" rather than rejecting the request.
+    Phase 9 (D-058): accepts a project-scoped API key (Authorization: ApiKey
+    <key>) as an alternative to a user's bearer token — the credential an
+    external CI/SDK/service integration actually uses."""
     results = run_suite(_select_tests(category))
     db = get_session()
     try:
@@ -422,7 +481,7 @@ def list_baselines(project: Project = Depends(require_project)):
 
 
 @app.get("/v1/regression-report")
-def regression_report(baseline_id: int | None = None, run_id: str | None = None, project: Project = Depends(require_project)):
+def regression_report(baseline_id: int | None = None, run_id: str | None = None, project: Project = Depends(require_project_or_api_key)):
     """Compares a run against a baseline, both scoped to this project (D-055).
     Defaults to the newest baseline vs the newest recorded run. Returns
     counts *and* full per-test detail — no single 'security score' is

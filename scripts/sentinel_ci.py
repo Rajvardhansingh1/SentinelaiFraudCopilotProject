@@ -13,12 +13,19 @@ Usage:
         --fail-on-severity critical,high \\
         --check-regression --max-regressions 0 \\
         --json-out results.json --md-out summary.md
+
+    # Phase 8/9 (D-058): a real CI pipeline should use a persistent,
+    # project-scoped API key (created once via POST /v1/projects/{id}/api-keys)
+    # instead of the default one-off throwaway account:
+    python -m scripts.sentinel_ci --target http://localhost:8000 \\
+        --api-key "$SENTINEL_API_KEY" --project-id "$SENTINEL_PROJECT_ID"
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -29,9 +36,12 @@ from proxy.ci import CIPolicy, evaluate, format_human_summary
 
 
 def _bootstrap_auth(target: str) -> dict:
-    """Phase 2 (D-055): every request now needs a bearer token. CI has no
-    durable identity, so it signs up a throwaway user + project each run —
-    keeps sentinel_ci's "no API keys needed" guarantee intact."""
+    """Phase 2 (D-055): every request now needs a bearer token. Falls back to
+    signing up a throwaway user + project each run when no persistent
+    credential is configured (SENTINEL_API_KEY / --api-key), keeping
+    sentinel_ci's original "no setup required" behavior intact for a first
+    run — Phase 8 (D-058) prefers a real, persistent project association
+    once one exists."""
     email = f"ci-{secrets.token_hex(8)}@sentinelai.local"
     password = secrets.token_hex(16)
     signup = requests.post(f"{target}/v1/auth/signup", json={"email": email, "password": password}, timeout=30)
@@ -40,6 +50,18 @@ def _bootstrap_auth(target: str) -> dict:
     project = requests.post(f"{target}/v1/projects", json={"name": "CI"}, headers=headers, timeout=30)
     project.raise_for_status()
     return {"headers": headers, "project_id": project.json()["id"]}
+
+
+def _resolve_auth(target: str, api_key: str | None, project_id: int | None) -> dict:
+    """Phase 8/9 (D-058): a persistent, project-scoped API key
+    (--api-key/SENTINEL_API_KEY + --project-id/SENTINEL_PROJECT_ID) is the
+    credential a real CI pipeline should use — associated with one project
+    across every run, unlike the throwaway-account fallback below."""
+    if api_key and project_id:
+        return {"headers": {"Authorization": f"ApiKey {api_key}"}, "project_id": project_id}
+    if api_key or project_id:
+        raise SystemExit("--api-key and --project-id must be given together (or neither, to bootstrap a throwaway project).")
+    return _bootstrap_auth(target)
 
 
 def _fetch_results(target: str, category: str | None, auth: dict) -> list[dict]:
@@ -52,7 +74,9 @@ def _fetch_results(target: str, category: str | None, auth: dict) -> list[dict]:
 
 
 def _fetch_regression_report(target: str, auth: dict) -> dict | None:
-    resp = requests.get(f"{target}/v1/regression-report", headers=auth["headers"], timeout=60)
+    resp = requests.get(
+        f"{target}/v1/regression-report", params={"project_id": auth["project_id"]}, headers=auth["headers"], timeout=60
+    )
     if resp.status_code == 200:
         return resp.json()
     if resp.status_code in (404, 409):
@@ -66,6 +90,15 @@ def _fetch_regression_report(target: str, auth: dict) -> dict | None:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", required=True, help="Base URL of a running SentinelAI proxy, e.g. http://localhost:8000")
+    parser.add_argument(
+        "--api-key", default=os.environ.get("SENTINEL_API_KEY"),
+        help="Persistent project-scoped API key (or SENTINEL_API_KEY env var). Requires --project-id. "
+             "Without one, a throwaway user+project is created for this run only."
+    )
+    parser.add_argument(
+        "--project-id", type=int, default=(int(v) if (v := os.environ.get("SENTINEL_PROJECT_ID")) else None),
+        help="Project to associate with --api-key (or SENTINEL_PROJECT_ID env var)."
+    )
     parser.add_argument("--category", default=None, help="Comma-separated test categories to run (default: all)")
     parser.add_argument("--fail-on-status", default="FAIL", help="Comma-separated statuses that count toward failure (default: FAIL)")
     parser.add_argument("--fail-on-severity", default=None, help="Comma-separated severities that count toward failure (default: any severity)")
@@ -80,7 +113,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
-    auth = _bootstrap_auth(args.target)
+    auth = _resolve_auth(args.target, args.api_key, args.project_id)
     results = _fetch_results(args.target, args.category, auth)
 
     regression_report = None
