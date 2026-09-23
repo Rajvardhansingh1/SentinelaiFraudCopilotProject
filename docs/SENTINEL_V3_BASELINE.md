@@ -267,3 +267,48 @@ signup/login/logout/session expiration, authorized-vs-unauthorized project
 access, or cross-project access attempts — because none of those concepts
 exist yet (Tasks 2-3). These become required only once Phase 2 introduces
 auth/projects; they are not a Phase 1 defect.
+
+## Gap Analysis Summary
+
+Ranked by how much of spec_V3.md's Phase 2+ work depends on it:
+
+1. **No authentication** (Task 2) — blocks all of spec_V3.md §7-11, §54-55,
+   and every "authorized"/"unauthorized" acceptance criterion in §68.
+   Everything else in V3 is gated behind this existing first.
+2. **No project/workspace model** (Task 3) — blocks §8-11, §14 (target
+   model needs a project to belong to), §26-27 (project-scoped dashboard),
+   §29 (remediation center needs project filter), §40-42 (project-scoped
+   reports), and the isolation tests §9/§59 require.
+3. **No target model** (folded into Task 3's finding) — `GenerateRequest.operation`
+   is not a target; spec_V3.md §14's target metadata (environment,
+   connection method, status) has no home yet.
+4. **No installable SDK/CLI or project-association credentials** (Task 6) —
+   blocks §34-35 and the "Local SDK" execution-source leg of §33/§39.
+5. **No scoped API credentials** (Task 6 / spec_V3.md §35-36) — every
+   caller today is equally (un)privileged; there is no revocable,
+   project-scoped token to build §36's API integration story on.
+6. **Remediation is static, not project-aware** (Task 4) — spec_V3.md §20-25's
+   core V3 value proposition (project-specific recommendations,
+   confidence, fact/analysis/recommendation separation) does not exist yet;
+   today's `remediation_for(category)` is a fixed lookup table.
+7. **Finding schema is missing a few V3 fields** (Task 4) — `project`,
+   explicit `impact`, `likely_root_cause`, `affected file/path`,
+   `assessment/run ID` on the row itself. Additive columns, not a breaking
+   change, once a project model exists to reference.
+8. **No PDF/CSV report formats** (Task 7) — smaller gap, additive.
+
+None of these gaps require touching working code in Phase 1 — spec_V3.md
+§67 Phase 1 is explicitly inspection-only. They define the shape of Phase 2
+onward and should inform, not preempt, that planning.
+
+## Phase 1 Acceptance
+
+Per spec_V3.md §67 Phase 1 acceptance criteria:
+
+- [x] Existing functionality documented (this file).
+- [x] Architecture understood (Architecture, Database sections above).
+- [x] Tests run: `318 passed, 3 skipped`;
+      web: `Test Files 3 passed (3), Tests 18 passed (18)`.
+- [x] Known gaps identified (Gap Analysis Summary above).
+
+No application behavior was changed to produce this baseline.
