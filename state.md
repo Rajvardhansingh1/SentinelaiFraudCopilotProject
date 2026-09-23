@@ -4,6 +4,8 @@ This file is the current project memory. It should describe where a fresh agent 
 
 ## Current State
 
+**V3 Phase 1 baseline:** completed 2026-09-23, see docs/SENTINEL_V3_BASELINE.md — active phase is spec_V3.md Phase 1, NOT STARTED → COMPLETE, awaiting user approval to begin Phase 2.
+
 **Project:** SentinelAI + Fraud Copilot  
 **State date:** 2026-09-23  
 **Overall status:** All 7 original spec.md phases done and REAL-verified (live Groq calls, real Playwright browser testing, real security/GSD review) — not just unit-tested. Several real bugs found via that live testing were fixed (see progress_log.md). Phase 8 (Streamlit → React/Next.js rewrite, D-034) also done. **2026-09-23 (D-040): Fraud Copilot paused** — user wants SentinelAI (platform layer) expanded on its own for now, per `phase_dev_upgrade.md`. `web/app/review` shows a paused notice, `agents/api.py` is out of the normal run flow, all Fraud Copilot code kept on disk untouched.
