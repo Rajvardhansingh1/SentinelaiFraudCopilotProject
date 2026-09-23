@@ -83,7 +83,52 @@ export default function FindingDetailPage() {
         <CardHeader>
           <CardTitle>Remediation guidance</CardTitle>
         </CardHeader>
-        <CardContent>{finding.remediation}</CardContent>
+        <CardContent className="space-y-3 text-sm">
+          <div className="flex items-center gap-2">
+            <Badge>{finding.remediation.confidence}</Badge>
+          </div>
+          <div>
+            <p className="font-medium text-text-primary">Observed</p>
+            <p className="text-text-primary/80">{finding.remediation.observed}</p>
+          </div>
+          <div>
+            <p className="font-medium text-text-primary">Analysis</p>
+            <p className="text-text-primary/80">{finding.remediation.analysis}</p>
+          </div>
+          <div>
+            <p className="font-medium text-text-primary">Security impact</p>
+            <p className="text-text-primary/80">{finding.remediation.security_impact}</p>
+          </div>
+          <div>
+            <p className="font-medium text-text-primary">Recommendation</p>
+            <p className="text-text-primary/80">{finding.remediation.expected_fix}</p>
+            <p className="mt-1 text-xs text-text-primary/60">Why: {finding.remediation.why_it_addresses}</p>
+          </div>
+          {finding.remediation.components_to_review.length > 0 && (
+            <div>
+              <p className="font-medium text-text-primary">Components to review</p>
+              <ul className="list-inside list-disc text-text-primary/80">
+                {finding.remediation.components_to_review.map((c) => (
+                  <li key={c}><code>{c}</code></li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {finding.remediation.additional_controls.length > 0 && (
+            <div>
+              <p className="font-medium text-text-primary">Additional controls</p>
+              <ul className="list-inside list-disc text-text-primary/80">
+                {finding.remediation.additional_controls.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div>
+            <p className="font-medium text-text-primary">Verification</p>
+            <p className="text-text-primary/80">{finding.remediation.verification_guidance}</p>
+          </div>
+        </CardContent>
       </Card>
 
       <div className="flex gap-2">

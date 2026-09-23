@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { ProjectSwitcher } from "./project-switcher";
 
 const LINKS = [
   { href: "/playground", label: "Playground" },
@@ -20,6 +21,7 @@ export function SidebarNav() {
   return (
     <nav className="w-56 shrink-0 border-r border-bg-surface bg-bg-surface/40 p-4">
       <div className="mb-6 text-lg font-semibold text-accent-teal">SentinelAI</div>
+      <ProjectSwitcher />
       <ul className="space-y-1">
         {LINKS.map((link) => (
           <li key={link.href}>

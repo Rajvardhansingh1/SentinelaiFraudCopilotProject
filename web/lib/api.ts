@@ -21,9 +21,29 @@ import type {
   SecurityEvent,
   SecurityTestResult,
 } from "./types";
+import { authHeaders, getActiveProjectId } from "./auth";
 
 const PROXY_BASE_URL = process.env.NEXT_PUBLIC_PROXY_BASE_URL ?? "http://localhost:8000";
 const AGENTS_API_BASE_URL = process.env.NEXT_PUBLIC_AGENTS_API_BASE_URL ?? "http://localhost:8001";
+
+/** Every SentinelAI proxy endpoint requires a bearer token (Phase 2, D-055)
+ * except signup/login/health. Project-scoped endpoints additionally need
+ * ?project_id= from whichever project is active in the UI. */
+function jsonHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", ...authHeaders() };
+}
+
+class NoActiveProjectError extends Error {
+  constructor() {
+    super("No active project selected.");
+  }
+}
+
+function requireProjectId(): number {
+  const id = getActiveProjectId();
+  if (id === null) throw new NoActiveProjectError();
+  return id;
+}
 
 // Ported from frontend/lib/proxy_client.py::call_generate (D-015/D-031).
 export const SYSTEM_PROMPT =
@@ -59,7 +79,7 @@ export async function postGenerate(sessionId: string, userContent: string): Prom
   try {
     const resp = await fetch(`${PROXY_BASE_URL}/v1/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         session_id: sessionId,
         operation: "playground",
@@ -69,6 +89,7 @@ export async function postGenerate(sessionId: string, userContent: string): Prom
         ],
         schema_name: null,
         grounding_context: null,
+        project_id: requireProjectId(),
       }),
     });
     const body = (await resp.json()) as GenerateResponse;
@@ -88,7 +109,9 @@ export async function postGenerate(sessionId: string, userContent: string): Prom
  */
 export async function getCalls(limit = 100): Promise<CallLogRow[]> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/calls?limit=${limit}`);
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/calls?limit=${limit}&project_id=${requireProjectId()}`, {
+      headers: authHeaders(),
+    });
     if (!resp.ok) return [];
     return (await resp.json()) as CallLogRow[];
   } catch {
@@ -136,7 +159,7 @@ export async function analyzeReceipt(sessionId: string, imageFile: File): Promis
  */
 export async function runSecurityTests(): Promise<SecurityTestResult[]> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/security-tests/run`, { method: "POST" });
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/security-tests/run`, { method: "POST", headers: authHeaders() });
     if (!resp.ok) return [];
     return (await resp.json()) as SecurityTestResult[];
   } catch {
@@ -153,7 +176,9 @@ export async function runSecurityTests(): Promise<SecurityTestResult[]> {
  */
 export async function getSecurityDashboard(): Promise<SecurityDashboardResult> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/security-dashboard`);
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/security-dashboard?project_id=${requireProjectId()}`, {
+      headers: authHeaders(),
+    });
     if (!resp.ok) return { status: "error", message: `SentinelAI returned ${resp.status}` };
     const data = await resp.json();
     return { status: "ok", data };
@@ -169,7 +194,10 @@ export async function getSecurityDashboard(): Promise<SecurityDashboardResult> {
  */
 export async function syncFindings(): Promise<FindingsSyncResult> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/findings/sync`, { method: "POST" });
+    const resp = await fetch(
+      `${PROXY_BASE_URL}/v1/findings/sync?project_id=${requireProjectId()}&source=dashboard`,
+      { method: "POST", headers: authHeaders() }
+    );
     if (!resp.ok) return { results: [], findings_created: [] };
     return (await resp.json()) as FindingsSyncResult;
   } catch {
@@ -183,8 +211,9 @@ export async function syncFindings(): Promise<FindingsSyncResult> {
 export async function listFindings(status?: FindingStatusValue): Promise<Finding[]> {
   try {
     const url = new URL(`${PROXY_BASE_URL}/v1/findings`);
+    url.searchParams.set("project_id", String(requireProjectId()));
     if (status) url.searchParams.set("status", status);
-    const resp = await fetch(url.toString());
+    const resp = await fetch(url.toString(), { headers: authHeaders() });
     if (!resp.ok) return [];
     return (await resp.json()) as Finding[];
   } catch {
@@ -198,7 +227,7 @@ export async function listFindings(status?: FindingStatusValue): Promise<Finding
  */
 export async function getFinding(id: number): Promise<Finding | null> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/findings/${id}`);
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/findings/${id}`, { headers: authHeaders() });
     if (!resp.ok) return null;
     return (await resp.json()) as Finding;
   } catch {
@@ -213,7 +242,7 @@ export async function updateFindingStatus(id: number, status: FindingStatusValue
   try {
     const resp = await fetch(`${PROXY_BASE_URL}/v1/findings/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ status }),
     });
     if (!resp.ok) return null;
@@ -232,9 +261,9 @@ export async function createBaseline(
   name: string
 ): Promise<{ status: "ok"; data: Baseline } | { status: "error"; code: string; message: string }> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/baselines`, {
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/baselines?project_id=${requireProjectId()}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ name }),
     });
     const body = await resp.json();
@@ -251,7 +280,9 @@ export async function createBaseline(
  */
 export async function listBaselines(): Promise<Baseline[]> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/baselines`);
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/baselines?project_id=${requireProjectId()}`, {
+      headers: authHeaders(),
+    });
     if (!resp.ok) return [];
     return (await resp.json()) as Baseline[];
   } catch {
@@ -268,8 +299,9 @@ export async function getRegressionReport(
 ): Promise<{ status: "ok"; data: RegressionReport } | { status: "error"; code: string; message: string }> {
   try {
     const url = new URL(`${PROXY_BASE_URL}/v1/regression-report`);
+    url.searchParams.set("project_id", String(requireProjectId()));
     if (baselineId !== undefined) url.searchParams.set("baseline_id", String(baselineId));
-    const resp = await fetch(url.toString());
+    const resp = await fetch(url.toString(), { headers: authHeaders() });
     const body = await resp.json();
     if (!resp.ok) return { status: "error", code: body?.detail?.code ?? "unknown", message: body?.detail?.message ?? "Failed to load regression report." };
     return { status: "ok", data: body as RegressionReport };
@@ -288,10 +320,11 @@ export async function listEvents(
 ): Promise<{ status: "ok"; data: SecurityEvent[] } | { status: "error"; message: string }> {
   try {
     const url = new URL(`${PROXY_BASE_URL}/v1/events`);
+    url.searchParams.set("project_id", String(requireProjectId()));
     for (const [key, value] of Object.entries(filters)) {
       if (value) url.searchParams.set(key, value);
     }
-    const resp = await fetch(url.toString());
+    const resp = await fetch(url.toString(), { headers: authHeaders() });
     if (!resp.ok) return { status: "error", message: `SentinelAI returned ${resp.status}` };
     return { status: "ok", data: (await resp.json()) as SecurityEvent[] };
   } catch (err) {
@@ -302,7 +335,7 @@ export async function listEvents(
 /** GET /v1/events/config. Returns null on failure. */
 export async function getEventsConfig(): Promise<EventsConfig | null> {
   try {
-    const resp = await fetch(`${PROXY_BASE_URL}/v1/events/config`);
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/events/config`, { headers: authHeaders() });
     if (!resp.ok) return null;
     return (await resp.json()) as EventsConfig;
   } catch {
@@ -325,7 +358,7 @@ function networkError(err: unknown): { status: "error"; code: string; message: s
 /** GET /v1/agents (D-048). */
 export async function listAgents(): Promise<ApiResult<AgentProfile[]>> {
   try {
-    return await jsonResult<AgentProfile[]>(await fetch(`${PROXY_BASE_URL}/v1/agents`));
+    return await jsonResult<AgentProfile[]>(await fetch(`${PROXY_BASE_URL}/v1/agents`, { headers: authHeaders() }));
   } catch (err) {
     return networkError(err);
   }
@@ -338,9 +371,9 @@ export async function evaluateAgentAction(
 ): Promise<ApiResult<AgentActionLog>> {
   try {
     return await jsonResult<AgentActionLog>(
-      await fetch(`${PROXY_BASE_URL}/v1/agents/${encodeURIComponent(agentId)}/evaluate`, {
+      await fetch(`${PROXY_BASE_URL}/v1/agents/${encodeURIComponent(agentId)}/evaluate?project_id=${requireProjectId()}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({ ...request, data_source: request.data_source || null }),
       })
     );
@@ -353,8 +386,9 @@ export async function evaluateAgentAction(
 export async function listAgentActions(agentId?: string): Promise<ApiResult<AgentActionLog[]>> {
   try {
     const url = new URL(`${PROXY_BASE_URL}/v1/agent-actions`);
+    url.searchParams.set("project_id", String(requireProjectId()));
     if (agentId) url.searchParams.set("agent_id", agentId);
-    return await jsonResult<AgentActionLog[]>(await fetch(url.toString()));
+    return await jsonResult<AgentActionLog[]>(await fetch(url.toString(), { headers: authHeaders() }));
   } catch (err) {
     return networkError(err);
   }
@@ -366,7 +400,7 @@ export async function resolveAgentAction(id: number, approve: boolean, approver:
     return await jsonResult<AgentActionLog>(
       await fetch(`${PROXY_BASE_URL}/v1/agent-actions/${id}/${approve ? "approve" : "reject"}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({ approver }),
       })
     );

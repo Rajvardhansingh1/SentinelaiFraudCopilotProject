@@ -279,7 +279,7 @@ def executive_markdown(r: dict) -> str:
     else:
         lines.append("- No recorded test runs in this period.")
     lines += ["", "## Key findings"]
-    lines += [f"- [{f['severity']}] {f['title']} ({f['status']}) — {f['remediation']}" for f in r["key_findings"]] or ["- No open findings."]
+    lines += [f"- [{f['severity']}] {f['title']} ({f['status']}) — {f['remediation']['expected_fix']} [{f['remediation']['confidence']}]" for f in r["key_findings"]] or ["- No open findings."]
     lines += ["", "## Severity distribution (open findings)"]
     lines += [f"- {k}: {v}" for k, v in sorted(r["severity_distribution"].items())] or ["- None."]
     mc = r["major_changes"]
@@ -324,12 +324,13 @@ def technical_markdown(r: dict) -> str:
             f"- Provider/model: {t['provider']} / {t['model']}",
             f"- Executed: {_ts(t['executed_at'])}",
             f"- Reproduce: `{t['reproduction']['command']}` (run {t['reproduction']['run_id']})",
-            f"- Remediation: {t['remediation']}",
+            f"- Remediation: {t['remediation']['expected_fix']} [{t['remediation']['confidence']}]",
         ]
     lines += ["", "## Findings"]
     if not r["findings"]:
         lines.append("No findings opened in this period.")
     for f in r["findings"]:
+        rem = f["remediation"]
         lines += [
             "",
             f"### #{f['id']} {f['title']} [{f['severity']}, {f['status']}]",
@@ -338,7 +339,15 @@ def technical_markdown(r: dict) -> str:
             f"- Provider/model: {f['provider']} / {f['model']}",
             f"- Opened / updated: {_ts(f['created_at'])} / {_ts(f['updated_at'])}",
             f"- Reproduction: {f['reproduction']}",
-            f"- Remediation: {f['remediation']}",
+            f"- Observed: {rem['observed']}",
+            f"- Analysis: {rem['analysis']}",
+            f"- Security impact: {rem['security_impact']}",
+            f"- Recommendation: {rem['expected_fix']}",
+            f"- Why this addresses it: {rem['why_it_addresses']}",
+            f"- Components to review: {', '.join(rem['components_to_review']) or '—'}",
+            f"- Additional controls: {', '.join(rem['additional_controls']) or '—'}",
+            f"- Verification: {rem['verification_guidance']}",
+            f"- Confidence: {rem['confidence']}",
         ]
     return "\n".join(lines)
 
@@ -348,8 +357,10 @@ def technical_csv(r: dict) -> str:
     one row per finding, for import into a spreadsheet or ticket tracker."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["id", "test_id", "title", "category", "severity", "status", "affected_target", "created_at", "updated_at", "remediation"])
+    writer.writerow(["id", "test_id", "title", "category", "severity", "status", "affected_target",
+                      "created_at", "updated_at", "expected_fix", "confidence"])
     for f in r["findings"]:
         writer.writerow([f["id"], f["test_id"], f["title"], f["category"], f["severity"], f["status"],
-                          f["affected_target"], _ts(f["created_at"]), _ts(f["updated_at"]), f["remediation"]])
+                          f["affected_target"], _ts(f["created_at"]), _ts(f["updated_at"]),
+                          f["remediation"]["expected_fix"], f["remediation"]["confidence"]])
     return buf.getvalue()

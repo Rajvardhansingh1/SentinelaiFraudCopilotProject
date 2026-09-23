@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test("dashboard renders without error and refresh re-fetches", async ({ page }) => {
   let callCount = 0;

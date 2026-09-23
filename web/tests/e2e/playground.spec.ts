@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./live-fixtures";
 
 test("selecting a prewritten attack and submitting shows Blocked", async ({ page }) => {
   await page.goto("/playground");

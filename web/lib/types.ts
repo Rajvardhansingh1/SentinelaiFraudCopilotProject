@@ -181,8 +181,24 @@ export interface SecurityTestResult {
 
 export type FindingStatusValue = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "RETEST_REQUIRED";
 
+// Mirrors proxy/remediation.py::Remediation (Phase 5, D-057). Structured so
+// the UI can render Observed/Analysis/Recommendation as distinct sections
+// (spec §23) instead of one opaque string.
+export interface Remediation {
+  observed: string;
+  analysis: string;
+  security_impact: string;
+  expected_fix: string;
+  why_it_addresses: string;
+  components_to_review: string[];
+  additional_controls: string[];
+  verification_guidance: string;
+  confidence: "HIGH CONFIDENCE" | "LIKELY" | "REQUIRES INVESTIGATION" | "INSUFFICIENT EVIDENCE";
+}
+
 export interface Finding {
   id: number;
+  project_id: number | null;
   test_id: string;
   category: string;
   severity: Severity;
@@ -200,7 +216,7 @@ export interface Finding {
   provider: string;
   model: string;
   status: FindingStatusValue;
-  remediation: string;
+  remediation: Remediation;
   created_at: string;
   updated_at: string;
 }
