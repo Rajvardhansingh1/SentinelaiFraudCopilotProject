@@ -186,3 +186,36 @@ there is no user/account to own a choice between BYOK and managed — today
 there is only one mode: the server's own `.env` keys are the implicit
 default, indistinguishable from a notional "managed" tier since there is no
 tiering, billing, or per-user quota.
+
+## SDK / CLI
+
+**No installable package exists.** `scripts/sentinel_ci.py` is the closest
+equivalent — an HTTP-calling script (`python -m scripts.sentinel_ci
+--target <url>`), not a `pip install`-able SDK or a `sentinel` CLI binary.
+It has no `sentinel init`/project-association workflow (spec_V3.md §34) —
+it takes a bare `--target` URL per invocation with no persisted local
+config, and no auth step (there is nothing to authenticate against — see
+Task 2).
+
+## API Integration
+
+`proxy/main.py` and `gateway/main.py` are themselves the API — every
+endpoint (`/v1/generate`, `/v1/security-tests/run`, `/v1/findings/*`,
+`/v1/baselines`, `/v1/regression-report`, `/v1/events*`, `/v1/agents/*`,
+`/v1/reports/*`, `/v1/gateway/chat`) is reachable by anyone who can reach
+the port, satisfying none of spec_V3.md §36's authentication/authorization/
+project-isolation/rate-limiting/audit-logging requirements except partial
+input validation (Pydantic request models) and the proxy's own per-session
+rate limiter (`check_and_increment`, session-scoped, not identity-scoped —
+a caller can reset by changing `session_id`).
+
+## CI/CD Integration
+
+Strong match to spec_V3.md §37: `scripts/sentinel_ci.py` already supports
+selecting a category/suite (`--category`), executing tests, machine-readable
+(`--json-out`) and human-readable (`--md-out`, stdout) output, configurable
+non-hardcoded pass/fail policy (`proxy/ci.py::CIPolicy`), and regression
+detection (`--check-regression` against `/v1/regression-report`). Documented
+in `docs/CI_CD.md` with a working `.github/workflows/security-tests.yml`.
+**Gap**: "selecting project" (spec_V3.md §37) has no meaning yet — there is
+one global target, not a project to select.
