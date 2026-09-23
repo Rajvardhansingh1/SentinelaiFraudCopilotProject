@@ -917,6 +917,26 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 
 ## Decision-writing rule
 
+## D-053 — Production database: Supabase (Postgres), shared across proxy and gateway
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** D-009 named SQLite as the baseline "move to Supabase/Postgres only if the single-file approach becomes insufficient." User explicitly requested the move now: the app is being deployed to the cloud, and a local-disk SQLite file per Render service can't be a shared source of truth between `proxy` and `gateway`, nor does it fit a real production deployment. User also raised a secrets concern (no DB credentials in the CLI or anywhere insecure) — already true independently (D-047: the CLI is HTTP-only, never touches the DB), but the migration reinforces it: the connection string becomes a platform secret (`sync: false` in `deploy/render.yaml`), never a file in the repo.
+
+**Decision:**
+- `DATABASE_URL` becomes the production Supabase Postgres connection string, set as a Render dashboard secret, never committed. Local dev keeps the SQLite default in `.env.example` — no reason to require Supabase for local work or tests.
+- `psycopg2-binary` added to `requirements.txt`.
+- Real bug found and fixed in `proxy/db/session.py`: `connect_args={"check_same_thread": False}` was unconditional — that kwarg is SQLite-only (pysqlite) and `psycopg2` raises `TypeError` on it. Now only passed for `sqlite://` URLs (`_connect_args()`, tested).
+- No SQLAlchemy model changes needed — `JSON`/`DateTime`/`String`/`Integer`/`Float` are all backend-portable; `UTCDateTime` (D-051) already works identically on Postgres (its docstring's SQLite framing was about why the bug existed, not a SQLite-only mechanism).
+- Gateway's `DATABASE_URL` (new) is meant to be the *same* Supabase instance as the proxy's, so `GATEWAY_RECORD_EVENTS=true` becomes safe to turn on — shared truth was the actual blocker on that flag, not just "no DB".
+
+**Rationale:** No architecture invented — SentinelAI's storage layer was already ORM-based and backend-agnostic in design; this makes it backend-agnostic in practice by fixing the one SQLite-specific line and wiring the secret path.
+
+**Consequence:** `docs/SUPABASE.md` documents setup, rollback, and what doesn't change (SDK/CLI and web never touch the DB directly — HTTP only, unaffected). 2 new tests (`tests/test_db_backend_portability.py`) pin the `connect_args` branching so a future change can't silently reintroduce the SQLite-only kwarg for Postgres URLs. Existing SQLite-based test suite runs unmodified (`DATABASE_URL=sqlite:///:memory:` in tests, untouched). Actual Supabase project creation/connection-string handoff is the user's own action — this change is the code+config+docs side, not a live migration (no real Supabase credentials were available to this session to verify an actual connection end-to-end).
+
+---
+
 When an open decision is resolved:
 1. Add a dated decision entry.
 2. Mark the OD item resolved.
