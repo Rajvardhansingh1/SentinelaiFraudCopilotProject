@@ -200,9 +200,14 @@ Task 2).
 ## API Integration
 
 `proxy/main.py` and `gateway/main.py` are themselves the API — every
-endpoint (`/v1/generate`, `/v1/security-tests/run`, `/v1/findings/*`,
-`/v1/baselines`, `/v1/regression-report`, `/v1/events*`, `/v1/agents/*`,
-`/v1/reports/*`, `/v1/gateway/chat`) is reachable by anyone who can reach
+endpoint (`/health`, `/quota`, `/v1/generate`, `/v1/security-tests/run`,
+`/v1/findings`, `/v1/findings/{finding_id}`, `/v1/findings/sync`,
+`/v1/baselines`, `/v1/regression-report`, `/v1/events`,
+`/v1/events/config`, `/v1/events/retention/apply`, `/v1/agents`,
+`/v1/agents/{agent_id}/evaluate`, `/v1/agent-actions`,
+`/v1/agent-actions/{log_id}/approve`, `/v1/agent-actions/{log_id}/reject`,
+`/v1/reports/executive`, `/v1/reports/technical`, `/v1/security-dashboard`,
+`/v1/calls`, `/v1/gateway/chat`) is reachable by anyone who can reach
 the port, satisfying none of spec_V3.md §36's authentication/authorization/
 project-isolation/rate-limiting/audit-logging requirements except partial
 input validation (Pydantic request models) and the proxy's own per-session
