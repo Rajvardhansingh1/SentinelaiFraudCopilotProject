@@ -9,7 +9,7 @@ SentinelAI today is a **single-tenant, unauthenticated, local-first**
 FastAPI security-testing platform: one proxy process, one SQLite database,
 no user accounts, no workspace/project model, no SDK/CLI package. Fraud
 Copilot (the original application layer) is paused (D-040). Every
-capability spec_V3.md asks for in Phase 1's scope — auth, multi-project
+V3 capability this baseline inspects — auth, multi-project
 isolation, SDK/CLI, managed inference — is either entirely absent or
 present only as a single-tenant equivalent. This is not a V3 upgrade of an
 existing multi-tenant product; it is a foundational build-out. See the Gap
@@ -138,10 +138,12 @@ executes when the suite runs one). Reproducibility exists via
 `Finding` (`proxy/db/models.py`) already covers most of spec_V3.md §17's
 field list: id, test_id (→ "test ID"), category, severity, title,
 description, affected_target, evidence, reproduction, provider/model,
-status, created_at/updated_at, remediation. **Missing against spec_V3.md
-§17**: no `project` field (no project model exists at all — see Task 3), no
+status, created_at/updated_at, plus remediation (computed at serialization
+via `remediation_for()`, not a stored column). **Missing against spec_V3.md
+§17**: no `project` field (no project model exists at all — see Project /
+Workspace Model above), no
 explicit `impact` field (folded into `description`), no `likely_root_cause`
-field distinct from `description`), no `affected file/path` field, no
+field distinct from `description`, no `affected file/path` field, no
 `assessment/run ID` field on the Finding row itself (it exists only
 indirectly via the originating `TestRunResult.run_id`, not stored on
 `Finding`). Status model (`OPEN`/`ACKNOWLEDGED`/`RESOLVED`/`RETEST_REQUIRED`)
@@ -166,12 +168,12 @@ guidance" at the most basic level and nothing further in spec_V3.md
 exist and are wired to real (non-fake) data per D-045's "no fake metrics"
 rule, satisfying spec_V3.md §60 for what exists today. **Missing against
 spec_V3.md §26**: no project switcher (no projects to switch between — see
-Task 3), no unified single-project overview page combining posture +
+Project / Workspace Model above), no unified single-project overview page combining posture +
 findings + recommendations + recent assessments in one view (spec_V3.md
 §27) — today these are separate pages (Security dashboard, Findings,
 Monitoring) rather than one project-scoped overview. No Integrations page
 (spec_V3.md §56) — no SDK/CLI/credential concept exists to display (see
-Task 6).
+SDK / CLI above).
 
 ## Provider Abstraction and BYOK
 
@@ -195,7 +197,7 @@ equivalent — an HTTP-calling script (`python -m scripts.sentinel_ci
 It has no `sentinel init`/project-association workflow (spec_V3.md §34) —
 it takes a bare `--target` URL per invocation with no persisted local
 config, and no auth step (there is nothing to authenticate against — see
-Task 2).
+Authentication above).
 
 ## API Integration
 
@@ -210,9 +212,12 @@ endpoint (`/health`, `/quota`, `/v1/generate`, `/v1/security-tests/run`,
 `/v1/calls`, `/v1/gateway/chat`) is reachable by anyone who can reach
 the port, satisfying none of spec_V3.md §36's authentication/authorization/
 project-isolation/rate-limiting/audit-logging requirements except partial
-input validation (Pydantic request models) and the proxy's own per-session
+input validation (Pydantic request models), the proxy's own per-session
 rate limiter (`check_and_increment`, session-scoped, not identity-scoped —
-a caller can reset by changing `session_id`).
+a caller can reset by changing `session_id`), and a partial audit trail via
+`call_logs`/`agent_action_logs` (the latter including an `approved_by`
+field) — though full compliance with §44's audit-trail requirements was not
+separately inspected here.
 
 ## CI/CD Integration
 
@@ -234,7 +239,8 @@ format" for the JSON/Markdown formats it supports today. **Gap against
 spec_V3.md §41**: no PDF or CSV format exists, only JSON and Markdown.
 **Gap against spec_V3.md §42**: report scope is implicitly global
 (`since`/`until` time-range only) — there is no "single target" or "single
-project" scope option because no target/project model exists (see Task 3).
+project" scope option because no target/project model exists (see Project /
+Workspace Model above).
 
 ## Monitoring
 
@@ -265,37 +271,67 @@ attempts), monitoring events, reports, gateway pipeline, and a UTC-timestamp
 regression guard. **Gap against spec_V3.md §58-59**: zero tests exist for
 signup/login/logout/session expiration, authorized-vs-unauthorized project
 access, or cross-project access attempts — because none of those concepts
-exist yet (Tasks 2-3). These become required only once Phase 2 introduces
+exist yet (see Authentication and Project / Workspace Model above). These become required only once Phase 2 introduces
 auth/projects; they are not a Phase 1 defect.
 
 ## Gap Analysis Summary
 
 Ranked by how much of spec_V3.md's Phase 2+ work depends on it:
 
-1. **No authentication** (Task 2) — blocks all of spec_V3.md §7-11, §54-55,
-   and every "authorized"/"unauthorized" acceptance criterion in §68.
-   Everything else in V3 is gated behind this existing first.
-2. **No project/workspace model** (Task 3) — blocks §8-11, §14 (target
-   model needs a project to belong to), §26-27 (project-scoped dashboard),
-   §29 (remediation center needs project filter), §40-42 (project-scoped
-   reports), and the isolation tests §9/§59 require.
-3. **No target model** (folded into Task 3's finding) — `GenerateRequest.operation`
-   is not a target; spec_V3.md §14's target metadata (environment,
-   connection method, status) has no home yet.
-4. **No installable SDK/CLI or project-association credentials** (Task 6) —
-   blocks §34-35 and the "Local SDK" execution-source leg of §33/§39.
-5. **No scoped API credentials** (Task 6 / spec_V3.md §35-36) — every
-   caller today is equally (un)privileged; there is no revocable,
-   project-scoped token to build §36's API integration story on.
-6. **Remediation is static, not project-aware** (Task 4) — spec_V3.md §20-25's
-   core V3 value proposition (project-specific recommendations,
-   confidence, fact/analysis/recommendation separation) does not exist yet;
-   today's `remediation_for(category)` is a fixed lookup table.
-7. **Finding schema is missing a few V3 fields** (Task 4) — `project`,
-   explicit `impact`, `likely_root_cause`, `affected file/path`,
+1. **No authentication** (see Authentication above) — blocks all of
+   spec_V3.md §7-11, §54-55, and every "authorized"/"unauthorized"
+   acceptance criterion in §68. Everything else in V3 is gated behind this
+   existing first.
+2. **No project/workspace model** (see Project / Workspace Model above) —
+   blocks §8-11, §14 (target model needs a project to belong to), §26-27
+   (project-scoped dashboard), §29 (remediation center needs project
+   filter), §40-42 (project-scoped reports), and the isolation tests
+   §9/§59 require.
+3. **No control-plane/execution-plane split** (see Architecture above) —
+   the proxy is a single control plane with no separate
+   control-plane/execution-plane distinction as spec_V3.md §5 describes;
+   `web/` calls `proxy/`'s and `gateway/`'s endpoints directly,
+   unauthenticated. This blocks spec_V3.md §5-6 directly, and is the most
+   directly Phase-2-relevant gap on this list — Phase 2 of spec_V3.md is
+   itself titled "Control Plane and Multi-Project Verification."
+4. **No target model** (folded into the Project / Workspace Model finding
+   above) — `GenerateRequest.operation` is not a target; spec_V3.md §14's
+   target metadata (environment, connection method, status) has no home
+   yet.
+5. **Finding status vocabulary mismatch** (see Findings above) — current
+   status model (`OPEN`/`ACKNOWLEDGED`/`RESOLVED`/`RETEST_REQUIRED`)
+   differs from spec_V3.md §18's `OPEN`/`IN_PROGRESS`/`RESOLVED`/
+   `ACCEPTED_RISK` — overlapping concepts, different vocabulary, would
+   need an explicit decision to reconcile.
+6. **No installable SDK/CLI or project-association credentials** (see
+   SDK / CLI above) — blocks §34-35 and the "Local SDK" execution-source
+   leg of §33/§39.
+7. **No scoped API credentials** (see SDK / CLI above / spec_V3.md
+   §35-36) — every caller today is equally (un)privileged; there is no
+   revocable, project-scoped token to build §36's API integration story on.
+8. **Remediation is static, not project-aware** (see Remediation above) —
+   spec_V3.md §20-25's core V3 value proposition (project-specific
+   recommendations, confidence, fact/analysis/recommendation separation)
+   does not exist yet; today's `remediation_for(category)` is a fixed
+   lookup table.
+9. **Finding schema is missing a few V3 fields** (see Findings above) —
+   `project`, explicit `impact`, `likely_root_cause`, `affected file/path`,
    `assessment/run ID` on the row itself. Additive columns, not a breaking
    change, once a project model exists to reference.
-8. **No PDF/CSV report formats** (Task 7) — smaller gap, additive.
+10. **No local-only vs cloud-connected mode** (see Local-Only vs
+    Cloud-Connected Mode above) — not applicable in the current
+    single-tenant form; spec_V3.md §38-39 presume a multi-tenant product
+    with a toggle against local execution that doesn't exist yet.
+11. **No managed-inference choice** (see Provider Abstraction and BYOK
+    above) — "Sentinel-managed inference" as a user-facing choice doesn't
+    exist, since there is no user/account to own a choice between BYOK and
+    managed inference.
+12. **No unified project overview page or Integrations page** (see
+    Dashboard above) — no project switcher, no single-project overview
+    page combining posture + findings + recommendations (spec_V3.md §27),
+    and no Integrations page (spec_V3.md §56).
+13. **No PDF/CSV report formats** (see Reports above) — smaller gap,
+    additive.
 
 None of these gaps require touching working code in Phase 1 — spec_V3.md
 §67 Phase 1 is explicitly inspection-only. They define the shape of Phase 2
