@@ -16,26 +16,36 @@ from proxy.findings import OPEN_LIKE_STATUSES
 _RECENT_ACTIVITY_LIMIT = 20
 
 
-def _latest_run_id(db: Session) -> str | None:
-    row = db.query(TestRunResult).order_by(TestRunResult.executed_at.desc()).first()
+def _latest_run_id(db: Session, project_id: int | None) -> str | None:
+    q = db.query(TestRunResult)
+    if project_id is not None:
+        q = q.filter(TestRunResult.project_id == project_id)
+    row = q.order_by(TestRunResult.executed_at.desc()).first()
     return row.run_id if row else None
 
 
-def build_dashboard_summary(db: Session) -> dict:
-    latest_run_id = _latest_run_id(db)
+def build_dashboard_summary(db: Session, project_id: int | None = None) -> dict:
+    """Phase 2 (D-055): project_id filters everything to one project's data
+    when given; None (used only by internal/legacy callers) means unscoped."""
+    latest_run_id = _latest_run_id(db, project_id)
     latest_rows: list[TestRunResult] = (
         db.query(TestRunResult).filter(TestRunResult.run_id == latest_run_id).all() if latest_run_id else []
     )
     status_counts = Counter(r.status for r in latest_rows)
 
-    open_findings = db.query(Finding).filter(Finding.status.in_(OPEN_LIKE_STATUSES)).all()
+    findings_q = db.query(Finding).filter(Finding.status.in_(OPEN_LIKE_STATUSES))
+    if project_id is not None:
+        findings_q = findings_q.filter(Finding.project_id == project_id)
+    open_findings = findings_q.all()
     severity_distribution = Counter(f.severity for f in open_findings)
 
-    recent_activity = (
-        db.query(TestRunResult).order_by(TestRunResult.executed_at.desc()).limit(_RECENT_ACTIVITY_LIMIT).all()
-    )
-
-    affected = {(r.provider, r.model) for r in db.query(TestRunResult.provider, TestRunResult.model).distinct()}
+    activity_q = db.query(TestRunResult)
+    affected_q = db.query(TestRunResult.provider, TestRunResult.model)
+    if project_id is not None:
+        activity_q = activity_q.filter(TestRunResult.project_id == project_id)
+        affected_q = affected_q.filter(TestRunResult.project_id == project_id)
+    recent_activity = activity_q.order_by(TestRunResult.executed_at.desc()).limit(_RECENT_ACTIVITY_LIMIT).all()
+    affected = {(r.provider, r.model) for r in affected_q.distinct()}
 
     return {
         "last_run_at": latest_rows[0].executed_at if latest_rows else None,

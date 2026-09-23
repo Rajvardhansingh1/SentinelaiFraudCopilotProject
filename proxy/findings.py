@@ -49,6 +49,7 @@ def _finding_fields(result: TestResult) -> dict:
 def finding_to_dict(f: Finding) -> dict:
     return {
         "id": f.id,
+        "project_id": f.project_id,
         "test_id": f.test_id,
         "category": f.category,
         "severity": f.severity,
@@ -66,23 +67,29 @@ def finding_to_dict(f: Finding) -> dict:
     }
 
 
-def sync_findings(db: Session, results: list[TestResult]) -> list[Finding]:
+def sync_findings(db: Session, results: list[TestResult], project_id: int | None = None) -> list[Finding]:
     """For every FAIL result, open a new Finding unless one is already open
-    (OPEN/ACKNOWLEDGED/RETEST_REQUIRED) for that test_id — avoids duplicate
-    spam on repeated runs. A RESOLVED finding for a test that fails again
-    gets a fresh Finding row (its own history), never overwritten."""
+    (OPEN/ACKNOWLEDGED/RETEST_REQUIRED) for that test_id *within the same
+    project* — avoids duplicate spam on repeated runs while keeping two
+    projects' findings for the same test_id independent (Phase 2, D-055).
+    A RESOLVED finding for a test that fails again gets a fresh Finding row
+    (its own history), never overwritten."""
     created: list[Finding] = []
     for result in results:
         if result.status != TestStatus.FAIL:
             continue
         existing_open = (
             db.query(Finding)
-            .filter(Finding.test_id == result.test_id, Finding.status.in_(OPEN_LIKE_STATUSES))
+            .filter(
+                Finding.test_id == result.test_id,
+                Finding.status.in_(OPEN_LIKE_STATUSES),
+                Finding.project_id == project_id,
+            )
             .first()
         )
         if existing_open:
             continue
-        finding = Finding(status="OPEN", **_finding_fields(result))
+        finding = Finding(status="OPEN", project_id=project_id, **_finding_fields(result))
         db.add(finding)
         created.append(finding)
     if created:
@@ -92,15 +99,17 @@ def sync_findings(db: Session, results: list[TestResult]) -> list[Finding]:
     return created
 
 
-def record_test_run(db: Session, results: list[TestResult]) -> str:
+def record_test_run(db: Session, results: list[TestResult], project_id: int | None = None) -> str:
     """Phase 6 (D-045): logs every result (any status) under one shared
     run_id, so the dashboard has real history — separate from `Finding`,
-    which only tracks FAILs needing human action."""
+    which only tracks FAILs needing human action. Phase 2 (D-055): tagged
+    with project_id so per-project dashboards/history are possible."""
     run_id = str(uuid.uuid4())
     for result in results:
         db.add(
             TestRunResult(
                 run_id=run_id,
+                project_id=project_id,
                 test_id=result.test_id,
                 category=result.category,
                 severity=result.severity.value,

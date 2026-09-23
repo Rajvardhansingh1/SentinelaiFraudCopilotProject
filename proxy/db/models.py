@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -28,10 +28,50 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Phase 2 (D-055): account. Password is bcrypt-hashed (proxy/auth.py) —
+    never stored or logged in plaintext, never returned by any endpoint."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Workspace(Base):
+    """Phase 2 (D-055): one per user, auto-created on signup. Spec_V3.md's
+    User→Workspace→Project hierarchy without building cross-user workspace
+    sharing, which nothing in Phase 2 asks for (YAGNI — add a membership
+    table later if/when multi-user workspaces are actually needed)."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Project(Base):
+    """Phase 2 (D-055): an AI system under assessment. `target_type` matches
+    spec_V3.md §10's onboarding choices."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    target_type: Mapped[str] = mapped_column(String, default="model")  # model|application|agent|api|service
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class CallLog(Base):
     __tablename__ = "call_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     session_id: Mapped[str] = mapped_column(String, index=True)
     operation: Mapped[str] = mapped_column(String)
     provider: Mapped[str] = mapped_column(String)
@@ -54,6 +94,7 @@ class Finding(Base):
     __tablename__ = "findings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     test_id: Mapped[str] = mapped_column(String, index=True)
     category: Mapped[str] = mapped_column(String)
     severity: Mapped[str] = mapped_column(String)
@@ -81,6 +122,7 @@ class TestRunResult(Base):
     __tablename__ = "test_run_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     run_id: Mapped[str] = mapped_column(String, index=True)
     test_id: Mapped[str] = mapped_column(String, index=True)
     category: Mapped[str] = mapped_column(String)
@@ -101,6 +143,7 @@ class AgentActionLog(Base):
     __tablename__ = "agent_action_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     agent_id: Mapped[str] = mapped_column(String, index=True)
     tool: Mapped[str] = mapped_column(String)
     action: Mapped[str] = mapped_column(String)
@@ -124,6 +167,7 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String, index=True)
     severity: Mapped[str] = mapped_column(String, index=True)
     category: Mapped[str] = mapped_column(String, index=True)
@@ -144,6 +188,7 @@ class Baseline(Base):
     __tablename__ = "baselines"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String)
     run_id: Mapped[str] = mapped_column(String, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))

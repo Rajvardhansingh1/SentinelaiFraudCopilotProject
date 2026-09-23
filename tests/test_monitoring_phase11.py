@@ -18,8 +18,12 @@ from proxy.events import purge_expired, query_events, record_event
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
 
 SECRET = "sk-ABCDEFGHIJKLMNOPQRST"
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _clear():
@@ -55,11 +59,12 @@ def _client(text="ok"):
 
 def _gen(client, content, session="s1"):
     return client.post("/v1/generate", json={"session_id": session, "operation": "playground",
-                                             "messages": [{"role": "user", "content": content}]})
+                                             "messages": [{"role": "user", "content": content}],
+                                             "project_id": PROJECT_ID}, headers=AUTH_HEADERS)
 
 
 def _events(**filters):
-    return TestClient(app).get("/v1/events", params=filters).json()
+    return TestClient(app).get("/v1/events", params=filters, headers=AUTH_HEADERS).json()
 
 
 # --- proxy emits the right event types ---
@@ -132,25 +137,32 @@ def _flip_test(status):
     )
 
 
+def _sync(client, category=None):
+    params = {"project_id": PROJECT_ID}
+    if category is not None:
+        params["category"] = category
+    return client.post("/v1/findings/sync", params=params, headers=AUTH_HEADERS)
+
+
 def test_new_finding_emits_finding_opened(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
     client = TestClient(app)
-    client.post("/v1/findings/sync")
+    _sync(client)
     [event] = _events(event_type="finding_opened")
     assert event["details"]["test_id"] == "flip"
-    client.post("/v1/findings/sync")  # already-open finding -> no second event
+    _sync(client)  # already-open finding -> no second event
     assert len(_events(event_type="finding_opened")) == 1
 
 
 def test_regression_against_baseline_emits_regression_detected(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
-    client.post("/v1/findings/sync")
-    client.post("/v1/baselines", json={"name": "good"})
+    _sync(client)
+    client.post("/v1/baselines", json={"name": "good"}, headers=AUTH_HEADERS)
     assert _events(event_type="regression_detected") == []
 
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
-    client.post("/v1/findings/sync")
+    _sync(client)
     [event] = _events(event_type="regression_detected")
     assert event["details"]["test_id"] == "flip"
     assert event["severity"] == "high"
@@ -158,7 +170,7 @@ def test_regression_against_baseline_emits_regression_detected(monkeypatch):
 
 def test_no_regression_event_without_a_baseline(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
-    TestClient(app).post("/v1/findings/sync")
+    _sync(TestClient(app))
     assert _events(event_type="regression_detected") == []
 
 
@@ -166,7 +178,9 @@ def test_no_regression_event_without_a_baseline(monkeypatch):
 
 
 def _eval(tool, action):
-    return TestClient(app).post("/v1/agents/support-assistant/evaluate", json={"tool": tool, "action": action}).json()
+    return TestClient(app).post(
+        "/v1/agents/support-assistant/evaluate", json={"tool": tool, "action": action}, headers=AUTH_HEADERS
+    ).json()
 
 
 def test_allowed_agent_action_emits_no_event():
@@ -196,14 +210,16 @@ def test_wildcard_request_is_suspicious():
 
 def test_self_approval_attempt_is_suspicious():
     row = _eval("ticketing", "update")
-    TestClient(app).post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "support-assistant"})
+    TestClient(app).post(
+        f"/v1/agent-actions/{row['id']}/approve", json={"approver": "support-assistant"}, headers=AUTH_HEADERS
+    )
     [event] = _events(event_type="suspicious_tool_activity")
     assert event["details"]["code"] == "self_approval_forbidden"
 
 
 def test_approving_a_denied_action_is_suspicious():
     row = _eval("ticketing", "delete")
-    TestClient(app).post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"})
+    TestClient(app).post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"}, headers=AUTH_HEADERS)
     assert len(_events(event_type="suspicious_tool_activity")) == 1
 
 
@@ -260,12 +276,12 @@ def _age(event_id, days):
 
 def test_retention_purges_only_expired_events_and_never_findings(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
-    TestClient(app).post("/v1/findings/sync")  # creates a Finding + a finding_opened event
+    _sync(TestClient(app))  # creates a Finding + a finding_opened event
     old = _seed(summary="old")
     _age(old.id, 45)
     _seed(summary="fresh")
 
-    resp = TestClient(app).post("/v1/events/retention/apply")
+    resp = TestClient(app).post("/v1/events/retention/apply", headers=AUTH_HEADERS)
     assert resp.json()["deleted"] == 1
     summaries = {e["summary"] for e in _events()}
     assert "old" not in summaries and "fresh" in summaries
@@ -296,7 +312,7 @@ def test_min_severity_drops_lower_events(monkeypatch):
 
 
 def test_config_endpoint_reports_controls():
-    cfg = TestClient(app).get("/v1/events/config").json()
+    cfg = TestClient(app).get("/v1/events/config", headers=AUTH_HEADERS).json()
     assert cfg["enabled"] is True
     assert cfg["retention_days"] == 30
     assert "suspicious_tool_activity" in cfg["event_types"]

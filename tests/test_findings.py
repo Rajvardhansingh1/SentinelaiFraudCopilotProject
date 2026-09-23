@@ -12,6 +12,10 @@ from proxy.engine.models import TestResult as Result
 from proxy.engine.models import TestStatus as Status
 from proxy.findings import finding_to_dict, sync_findings
 from proxy.main import app
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _fail_result(test_id="fail-1", category="prompt_injection", severity=Severity.HIGH):
@@ -131,18 +135,18 @@ def test_findings_sync_endpoint_creates_and_lists(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [fail_test])
 
     client = TestClient(app)
-    resp = client.post("/v1/findings/sync")
+    resp = client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["findings_created"]) == 1
     assert body["findings_created"][0]["test_id"] == "endpoint-fail"
     assert body["findings_created"][0]["status"] == "OPEN"
 
-    listed = client.get("/v1/findings")
+    listed = client.get("/v1/findings", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert listed.status_code == 200
     assert any(f["test_id"] == "endpoint-fail" for f in listed.json())
 
-    filtered = client.get("/v1/findings", params={"status": "RESOLVED"})
+    filtered = client.get("/v1/findings", params={"status": "RESOLVED", "project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert filtered.json() == []
 
 
@@ -164,11 +168,11 @@ def test_findings_detail_test_attack_response_evidence_reproduce_all_present(mon
     monkeypatch.setattr("proxy.main.all_tests", lambda: [fail_test])
 
     client = TestClient(app)
-    client.post("/v1/findings/sync")
-    listed = client.get("/v1/findings").json()
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
+    listed = client.get("/v1/findings", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS).json()
     finding_id = next(f["id"] for f in listed if f["test_id"] == "drilldown-fail")
 
-    detail = client.get(f"/v1/findings/{finding_id}")
+    detail = client.get(f"/v1/findings/{finding_id}", headers=AUTH_HEADERS)
     assert detail.status_code == 200
     d = detail.json()
     assert d["test_id"] == "drilldown-fail"  # Test
@@ -180,41 +184,41 @@ def test_findings_detail_test_attack_response_evidence_reproduce_all_present(mon
 
 def test_finding_status_patch_updates_and_persists():
     db = _db()
-    [finding] = sync_findings(db, [_fail_result()])
+    [finding] = sync_findings(db, [_fail_result()], project_id=PROJECT_ID)
     finding_id = finding.id
     db.close()
 
     client = TestClient(app)
-    resp = client.patch(f"/v1/findings/{finding_id}", json={"status": "ACKNOWLEDGED"})
+    resp = client.patch(f"/v1/findings/{finding_id}", json={"status": "ACKNOWLEDGED"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["status"] == "ACKNOWLEDGED"
 
-    refetched = client.get(f"/v1/findings/{finding_id}")
+    refetched = client.get(f"/v1/findings/{finding_id}", headers=AUTH_HEADERS)
     assert refetched.json()["status"] == "ACKNOWLEDGED"
 
 
 def test_finding_status_patch_rejects_unknown_status():
     db = _db()
-    [finding] = sync_findings(db, [_fail_result()])
+    [finding] = sync_findings(db, [_fail_result()], project_id=PROJECT_ID)
     finding_id = finding.id
     db.close()
 
     client = TestClient(app)
-    resp = client.patch(f"/v1/findings/{finding_id}", json={"status": "NOT_A_REAL_STATUS"})
+    resp = client.patch(f"/v1/findings/{finding_id}", json={"status": "NOT_A_REAL_STATUS"}, headers=AUTH_HEADERS)
     assert resp.status_code == 422
 
 
 def test_finding_patch_never_deletes_row_only_status_changes():
     db = _db()
-    [finding] = sync_findings(db, [_fail_result()])
+    [finding] = sync_findings(db, [_fail_result()], project_id=PROJECT_ID)
     finding_id = finding.id
     original_evidence = finding_to_dict(finding)["evidence"]
     db.close()
 
     client = TestClient(app)
-    client.patch(f"/v1/findings/{finding_id}", json={"status": "RESOLVED"})
+    client.patch(f"/v1/findings/{finding_id}", json={"status": "RESOLVED"}, headers=AUTH_HEADERS)
 
-    still_there = client.get(f"/v1/findings/{finding_id}")
+    still_there = client.get(f"/v1/findings/{finding_id}", headers=AUTH_HEADERS)
     assert still_there.status_code == 200
     assert still_there.json()["status"] == "RESOLVED"
     assert still_there.json()["evidence"] == original_evidence
@@ -222,12 +226,12 @@ def test_finding_patch_never_deletes_row_only_status_changes():
 
 def test_get_missing_finding_returns_404():
     client = TestClient(app)
-    resp = client.get("/v1/findings/999999999")
+    resp = client.get("/v1/findings/999999999", headers=AUTH_HEADERS)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "finding_not_found"
 
 
 def test_patch_missing_finding_returns_404():
     client = TestClient(app)
-    resp = client.patch("/v1/findings/999999999", json={"status": "OPEN"})
+    resp = client.patch("/v1/findings/999999999", json={"status": "OPEN"}, headers=AUTH_HEADERS)
     assert resp.status_code == 404

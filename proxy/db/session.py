@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,8 +21,37 @@ _engine = create_engine(
 SessionLocal = sessionmaker(bind=_engine)
 
 
+# Phase 2 (D-055): tables that gained a nullable project_id column after
+# already shipping. `create_all()` only creates missing TABLES, never adds
+# columns to ones that already exist — so an already-deployed DB needs this
+# explicit, additive-only migration. Nullable + no default touches zero
+# existing rows (spec_V3.md §61/§62: preserve existing data, never a
+# destructive schema change).
+_TABLES_NEEDING_PROJECT_ID = [
+    "call_logs",
+    "findings",
+    "test_run_results",
+    "agent_action_logs",
+    "security_events",
+    "baselines",
+]
+
+
+def _migrate_add_project_id_columns() -> None:
+    inspector = inspect(_engine)
+    existing_tables = set(inspector.get_table_names())
+    with _engine.begin() as conn:
+        for table in _TABLES_NEEDING_PROJECT_ID:
+            if table not in existing_tables:
+                continue  # create_all() will create it with the column already present
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            if "project_id" not in columns:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN project_id INTEGER"))
+
+
 def init_db() -> None:
     Base.metadata.create_all(_engine)
+    _migrate_add_project_id_columns()
 
 
 def get_session() -> Session:

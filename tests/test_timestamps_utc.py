@@ -15,6 +15,10 @@ from proxy.events import record_event
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 class FakeProvider:
@@ -35,16 +39,20 @@ def teardown_function():
 def test_call_log_timestamps_are_utc_aware():
     app.dependency_overrides[get_provider] = lambda: FakeProvider()
     client = TestClient(app)
-    client.post("/v1/generate", json={"session_id": "tz", "operation": "playground",
-                                      "messages": [{"role": "user", "content": "hi"}]})
-    rows = client.get("/v1/calls").json()
+    client.post(
+        "/v1/generate",
+        json={"session_id": "tz", "operation": "playground",
+              "messages": [{"role": "user", "content": "hi"}], "project_id": PROJECT_ID},
+        headers=AUTH_HEADERS,
+    )
+    rows = client.get("/v1/calls", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS).json()
     assert rows and all(_is_utc_aware(r["created_at"]) for r in rows)
 
 
 def test_finding_run_and_dashboard_timestamps_are_utc_aware():
     client = TestClient(app)
-    client.post("/v1/findings/sync")
-    dash = client.get("/v1/security-dashboard").json()
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
+    dash = client.get("/v1/security-dashboard", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS).json()
     assert _is_utc_aware(dash["last_run_at"])
     assert all(_is_utc_aware(r["executed_at"]) for r in dash["recent_activity"])
 

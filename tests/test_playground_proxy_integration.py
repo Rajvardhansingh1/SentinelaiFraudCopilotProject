@@ -1,9 +1,18 @@
+import os
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 from fastapi.testclient import TestClient
 
 from frontend.data.sample_attacks import SAMPLE_ATTACKS
+from proxy.db.session import init_db
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 class FakeProvider:
@@ -30,7 +39,9 @@ def test_sample_attack_prompts_are_blocked_via_live_proxy():
                 "session_id": f"pg-attack-{i}",
                 "operation": "playground",
                 "messages": [{"role": "user", "content": attack["prompt"]}],
+                "project_id": PROJECT_ID,
             },
+            headers=AUTH_HEADERS,
         )
         assert resp.status_code == 400
         body = resp.json()
@@ -46,7 +57,9 @@ def test_benign_playground_prompt_is_allowed():
             "session_id": "pg-benign",
             "operation": "playground",
             "messages": [{"role": "user", "content": "What is the capital of France?"}],
+            "project_id": PROJECT_ID,
         },
+        headers=AUTH_HEADERS,
     )
     assert resp.status_code == 200
     assert resp.json()["guardrails"]["injection"]["flagged"] is False

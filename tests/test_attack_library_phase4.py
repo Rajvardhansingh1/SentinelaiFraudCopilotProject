@@ -93,9 +93,11 @@ def test_security_tests_run_endpoint_returns_all_five_statuses_serialized():
     from fastapi.testclient import TestClient
 
     from proxy.main import app
+    from tests.auth_helpers import auth_headers_and_project
 
     client = TestClient(app)
-    resp = client.post("/v1/security-tests/run")
+    headers, _ = auth_headers_and_project(client)
+    resp = client.post("/v1/security-tests/run", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) == len(all_tests())

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # Off by default so the gateway stays stateless (D-049); on = metadata-only SecurityEvent rows.
     gateway_record_events: bool = False
 
+    # Auth (Phase 2, D-055). Must be set explicitly in production — proxy/main.py
+    # refuses to start in production with this empty. Never a hardcoded default;
+    # generate with e.g. `python -c "import secrets; print(secrets.token_hex(32))"`.
+    jwt_secret: str = ""
+    jwt_expiry_hours: int = 24
+
     env: str = "development"
     # Comma-separated origins allowed to call this proxy from a browser (D-034: CORS
     # matters once a separately-hosted frontend, e.g. React, is a different origin).

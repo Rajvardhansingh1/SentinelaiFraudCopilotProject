@@ -18,6 +18,8 @@ exifread
 slowapi
 sqlalchemy
 psycopg2-binary
+bcrypt
+pyjwt
 python-dotenv
 pyyaml
 streamlit

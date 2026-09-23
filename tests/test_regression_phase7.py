@@ -18,6 +18,10 @@ from proxy.engine.models import TestStatus as Status
 from proxy.findings import record_test_run, sync_findings
 from proxy.main import app
 from proxy.regression import compare_runs, create_baseline, findings_delta
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _db():
@@ -199,16 +203,16 @@ def test_regression_report_endpoint_detects_a_real_regression(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [passing])
     client = TestClient(app)
 
-    client.post("/v1/findings/sync")
-    created = client.post("/v1/baselines", json={"name": "good state"})
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
+    created = client.post("/v1/baselines", json={"name": "good state"}, headers=AUTH_HEADERS)
     assert created.status_code == 200
 
     # Same test now fails — a real regression.
     failing = SecurityTest(**{**passing.__dict__, "evaluate": lambda ev: (Status.FAIL, "not blocked")})
     monkeypatch.setattr("proxy.main.all_tests", lambda: [failing])
-    client.post("/v1/findings/sync")
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
 
-    report = client.get("/v1/regression-report")
+    report = client.get("/v1/regression-report", headers=AUTH_HEADERS)
     assert report.status_code == 200
     body = report.json()
     assert [e["test_id"] for e in body["regressions"]] == ["flip"]
@@ -218,7 +222,7 @@ def test_regression_report_endpoint_detects_a_real_regression(monkeypatch):
 
 def test_baseline_endpoint_409s_when_no_run_recorded():
     client = TestClient(app)
-    resp = client.post("/v1/baselines", json={"name": "nothing yet"})
+    resp = client.post("/v1/baselines", json={"name": "nothing yet"}, headers=AUTH_HEADERS)
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "no_run_to_baseline"
 
@@ -226,8 +230,8 @@ def test_baseline_endpoint_409s_when_no_run_recorded():
 def test_regression_report_404s_without_a_baseline(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [])
     client = TestClient(app)
-    client.post("/v1/findings/sync")
-    resp = client.get("/v1/regression-report")
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
+    resp = client.get("/v1/regression-report", headers=AUTH_HEADERS)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "baseline_not_found"
 
@@ -240,5 +244,5 @@ def test_baselines_are_listed_newest_first():
     db.close()
 
     client = TestClient(app)
-    names = [b["name"] for b in client.get("/v1/baselines").json()]
+    names = [b["name"] for b in client.get("/v1/baselines", headers=AUTH_HEADERS).json()]
     assert "first" in names and "second" in names

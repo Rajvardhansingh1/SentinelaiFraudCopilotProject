@@ -15,6 +15,8 @@ services:
         value: "8"
       - key: DATABASE_URL
         sync: false  # Supabase Postgres connection string — set in the Render dashboard, never committed. See docs/SUPABASE.md
+      - key: JWT_SECRET
+        sync: false  # required in production (Phase 2, D-055) — generate with: python -c "import secrets; print(secrets.token_hex(32))"
       - key: CHROMA_PERSIST_DIR
         value: /opt/render/project/data/chroma
       - key: ENV

@@ -23,6 +23,7 @@ class GenerateRequest(BaseModel):
     messages: list[Message]
     schema_name: str | None = None
     grounding_context: str | None = None
+    project_id: int  # Phase 2 (D-055): every generate() call is scoped to one project
     provider_config: ProviderConfig | None = None
 
 

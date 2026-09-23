@@ -8,8 +8,13 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from fastapi.testclient import TestClient
 
 from proxy.ci import CIPolicy, evaluate, format_human_summary, matching_results
+from proxy.db.session import init_db
 from proxy.engine.registry import all_tests
 from proxy.main import app
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _r(test_id, status, severity="high", category="prompt_injection", detail="d"):
@@ -210,7 +215,7 @@ def test_cli_passes_category_filter_as_query_param(monkeypatch):
 
 def test_security_tests_run_endpoint_filters_by_category():
     client = TestClient(app)
-    resp = client.post("/v1/security-tests/run", params={"category": "jailbreak"})
+    resp = client.post("/v1/security-tests/run", params={"category": "jailbreak"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) > 0
@@ -219,7 +224,9 @@ def test_security_tests_run_endpoint_filters_by_category():
 
 def test_security_tests_run_endpoint_accepts_multiple_categories():
     client = TestClient(app)
-    resp = client.post("/v1/security-tests/run", params={"category": "jailbreak,unsafe_output_behavior"})
+    resp = client.post(
+        "/v1/security-tests/run", params={"category": "jailbreak,unsafe_output_behavior"}, headers=AUTH_HEADERS
+    )
     body = resp.json()
     categories = {row["category"] for row in body}
     assert categories == {"jailbreak", "unsafe_output_behavior"}
@@ -227,13 +234,15 @@ def test_security_tests_run_endpoint_accepts_multiple_categories():
 
 def test_security_tests_run_endpoint_runs_everything_without_category():
     client = TestClient(app)
-    resp = client.post("/v1/security-tests/run")
+    resp = client.post("/v1/security-tests/run", headers=AUTH_HEADERS)
     assert len(resp.json()) == len(all_tests())
 
 
 def test_findings_sync_endpoint_also_respects_category_filter():
     client = TestClient(app)
-    resp = client.post("/v1/findings/sync", params={"category": "jailbreak"})
+    resp = client.post(
+        "/v1/findings/sync", params={"category": "jailbreak", "project_id": PROJECT_ID}, headers=AUTH_HEADERS
+    )
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert all(r["category"] == "jailbreak" for r in results)

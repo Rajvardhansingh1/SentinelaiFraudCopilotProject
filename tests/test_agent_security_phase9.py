@@ -18,6 +18,10 @@ from proxy.agent_policy import evaluate as evaluate_policy
 from proxy.db.models import AgentActionLog
 from proxy.db.session import SessionLocal, init_db
 from proxy.main import app
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, _ = auth_headers_and_project(TestClient(app))
 
 PROFILE_DATA = {
     "agent_id": "support-assistant",
@@ -149,6 +153,7 @@ def test_request_cannot_carry_its_own_approval():
     resp = client.post(
         "/v1/agents/support-assistant/evaluate",
         json={"tool": "ticketing", "action": "update", "approved": True, "decision": "ALLOW"},
+        headers=AUTH_HEADERS,
     )
     assert resp.status_code == 200
     assert resp.json()["decision"] == "REQUIRE_APPROVAL"
@@ -178,7 +183,7 @@ def test_missing_profiles_file_means_no_agents_not_a_crash(tmp_path):
 
 def test_evaluate_endpoint_records_agent_tool_action_decision_and_result():
     client = TestClient(app)
-    resp = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "delete"})
+    resp = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "delete"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     row = resp.json()
     assert row["agent_id"] == "support-assistant"
@@ -187,36 +192,36 @@ def test_evaluate_endpoint_records_agent_tool_action_decision_and_result():
     assert row["decision"] == "DENY"
     assert row["execution_result"] == "blocked"
 
-    listed = client.get("/v1/agent-actions", params={"agent_id": "support-assistant"}).json()
+    listed = client.get("/v1/agent-actions", params={"agent_id": "support-assistant"}, headers=AUTH_HEADERS).json()
     assert any(r["id"] == row["id"] for r in listed)
 
 
 def test_allowed_action_is_recorded_but_never_executed():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "knowledge_base", "action": "search"}).json()
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "knowledge_base", "action": "search"}, headers=AUTH_HEADERS).json()
     assert row["decision"] == "ALLOW"
     assert row["execution_result"] == "allowed_not_executed"
 
 
 def test_unknown_agent_returns_404():
     client = TestClient(app)
-    resp = client.post("/v1/agents/ghost-agent/evaluate", json={"tool": "x", "action": "y"})
+    resp = client.post("/v1/agents/ghost-agent/evaluate", json={"tool": "x", "action": "y"}, headers=AUTH_HEADERS)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "agent_not_found"
 
 
 def test_list_agents_exposes_config_profiles():
     client = TestClient(app)
-    agents = client.get("/v1/agents").json()
+    agents = client.get("/v1/agents", headers=AUTH_HEADERS).json()
     assert any(a["agent_id"] == "support-assistant" for a in agents)
 
 
 def test_approval_flow_approve_by_human():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}).json()
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}, headers=AUTH_HEADERS).json()
     assert row["execution_result"] == "pending_approval"
 
-    approved = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice@example.com"})
+    approved = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice@example.com"}, headers=AUTH_HEADERS)
     assert approved.status_code == 200
     assert approved.json()["execution_result"] == "approved_not_executed"
     assert approved.json()["approved_by"] == "alice@example.com"
@@ -224,16 +229,16 @@ def test_approval_flow_approve_by_human():
 
 def test_approval_flow_reject_by_human():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "email", "action": "send"}).json()
-    rejected = client.post(f"/v1/agent-actions/{row['id']}/reject", json={"approver": "bob"})
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "email", "action": "send"}, headers=AUTH_HEADERS).json()
+    rejected = client.post(f"/v1/agent-actions/{row['id']}/reject", json={"approver": "bob"}, headers=AUTH_HEADERS)
     assert rejected.status_code == 200
     assert rejected.json()["execution_result"] == "rejected"
 
 
 def test_agent_cannot_self_approve():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}).json()
-    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "  Support-Assistant "})
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}, headers=AUTH_HEADERS).json()
+    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "  Support-Assistant "}, headers=AUTH_HEADERS)
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "self_approval_forbidden"
 
@@ -241,24 +246,24 @@ def test_agent_cannot_self_approve():
 def test_denied_action_cannot_be_approved_after_the_fact():
     """Bypass attempt: 'approving' a DENY must not flip it to allowed."""
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "delete"}).json()
-    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"})
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "delete"}, headers=AUTH_HEADERS).json()
+    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"}, headers=AUTH_HEADERS)
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "not_pending"
 
 
 def test_already_resolved_action_cannot_be_re_resolved():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}).json()
-    client.post(f"/v1/agent-actions/{row['id']}/reject", json={"approver": "bob"})
-    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"})
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}, headers=AUTH_HEADERS).json()
+    client.post(f"/v1/agent-actions/{row['id']}/reject", json={"approver": "bob"}, headers=AUTH_HEADERS)
+    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "alice"}, headers=AUTH_HEADERS)
     assert resp.status_code == 409
 
 
 def test_blank_approver_is_rejected():
     client = TestClient(app)
-    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}).json()
-    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "   "})
+    row = client.post("/v1/agents/support-assistant/evaluate", json={"tool": "ticketing", "action": "update"}, headers=AUTH_HEADERS).json()
+    resp = client.post(f"/v1/agent-actions/{row['id']}/approve", json={"approver": "   "}, headers=AUTH_HEADERS)
     assert resp.status_code == 422
 
 

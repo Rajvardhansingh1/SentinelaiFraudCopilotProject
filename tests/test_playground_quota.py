@@ -1,11 +1,20 @@
+import os
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 from fastapi.testclient import TestClient
 
 from frontend.components.redteam_playground import QUOTA_BANNER, handle_response
 from frontend.data.sample_attacks import SAMPLE_ATTACKS
 from proxy.config import settings
+from proxy.db.session import init_db
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 class FakeProvider:
@@ -25,12 +34,16 @@ def test_proxy_returns_429_after_limit_exhausted():
     for _ in range(settings.rate_limit_per_session):
         ok = client.post(
             "/v1/generate",
-            json={"session_id": session, "operation": "playground", "messages": [{"role": "user", "content": "hi"}]},
+            json={"session_id": session, "operation": "playground", "messages": [{"role": "user", "content": "hi"}],
+                  "project_id": PROJECT_ID},
+            headers=AUTH_HEADERS,
         )
         assert ok.status_code == 200
     blocked = client.post(
         "/v1/generate",
-        json={"session_id": session, "operation": "playground", "messages": [{"role": "user", "content": "hi"}]},
+        json={"session_id": session, "operation": "playground", "messages": [{"role": "user", "content": "hi"}],
+              "project_id": PROJECT_ID},
+        headers=AUTH_HEADERS,
     )
     assert blocked.status_code == 429
 

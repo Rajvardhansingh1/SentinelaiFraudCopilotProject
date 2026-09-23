@@ -954,6 +954,27 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 
 ---
 
+## D-055 — Phase 2 (spec_V3.md): stateless JWT auth + User → Workspace → Project isolation
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** spec_V3.md's multi-tenant SaaS model (§9, §59, §67 Phase 2) requires that every caller be authenticated and that a request for one project's data can never return another project's data. Before this, every endpoint was open with no notion of a caller or a tenant boundary.
+
+**Decision:**
+- Auth is stateless JWT (PyJWT, HS256), bcrypt password hashing, no session store (`proxy/auth.py`). `EmailStr` was avoided in favor of a plain `str` + regex validator to skip adding the `email-validator` dependency for one field.
+- Data model: `User` → one `Workspace` (auto-created on signup, no cross-user workspace sharing — nothing in Phase 2 asks for it) → many `Project`. Every existing content table (`CallLog`, `Finding`, `TestRunResult`, `AgentActionLog`, `SecurityEvent`, `Baseline`) gained a nullable `project_id` FK, added via an additive `ALTER TABLE` migration run after `create_all()` (no Alembic — matches the project's existing no-migration-tool convention).
+- A global FastAPI middleware requires a bearer token on every route except `/health`, `/docs`, `/redoc`, `/openapi.json`, `/v1/auth/signup`, `/v1/auth/login`.
+- Project isolation is enforced through one choke point, `proxy/projects.py::owned_project()` — 404 (never 403) on any mismatch, so a project ID's existence is never confirmed to someone who doesn't own it.
+- Only the core data paths spec_V3.md §67 Phase 2 names were retrofitted to be project-scoped this pass: `/v1/generate`, `/v1/findings/*`, `/v1/security-dashboard`, `/v1/calls`. Agent policy (`/v1/agents/*`, `/v1/agent-actions/*`), baselines/regression (`/v1/baselines`, `/v1/regression-report`), events (`/v1/events*`), and reports (`/v1/reports/*`) remain globally-authenticated via the middleware but are **not yet project-scoped** — a deliberate, tracked scoping gap, not a silent one, left for a later phase since spec_V3.md doesn't require it in Phase 2.
+- A known consequence of the baseline gap above: `/v1/findings/sync`'s regression-detection lookup still finds the newest baseline across *all* projects, not just the caller's — because `create_baseline()` doesn't set `project_id` yet. Scoping both together is the correct fix; scoping one without the other would silently break regression detection for every project.
+
+**Rationale:** JWT over server-side sessions because the proxy is meant to run stateless behind a load balancer (spec_V3.md's cloud deployment target) with no shared session store. The `owned_project()` choke point exists so isolation logic is written once and reused, not re-implemented per endpoint.
+
+**Consequence:** Breaking change for every existing unauthenticated caller (web playground, CLI, old test suite) — expected and necessary, not accidental. All 16 affected test files were retrofitted to sign up a user and create a project via a new shared `tests/auth_helpers.py::auth_headers_and_project()` helper; full suite is green (327 passed, 3 skipped, 0 failed, 0 regressions). `.env.example` and `deploy/render.yaml` gained `JWT_SECRET`/`JWT_EXPIRY_HOURS`; the app refuses to start in production without `JWT_SECRET` set. Frontend (web playground) login UI and updated API calls are not yet built — still open.
+
+---
+
 When an open decision is resolved:
 1. Add a dated decision entry.
 2. Mark the OD item resolved.

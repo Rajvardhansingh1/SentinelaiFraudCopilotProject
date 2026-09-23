@@ -23,8 +23,18 @@ from proxy.agent_policy import (
     load_profiles,
     profile_to_dict,
 )
+from proxy.auth import (
+    AuthResponse,
+    LoginRequest,
+    SignupRequest,
+    decode_token,
+    get_current_user,
+    hash_password,
+    issue_token,
+    verify_password,
+)
 from proxy.config import settings
-from proxy.db.models import AgentActionLog, Baseline, CallLog, Finding
+from proxy.db.models import AgentActionLog, Baseline, CallLog, Finding, Project, User, Workspace
 from proxy.db.session import get_session, init_db
 from proxy.engine.registry import all_tests
 from proxy.engine.runner import run_suite
@@ -44,6 +54,7 @@ from proxy.events import (
     record_event,
 )
 from proxy.findings import FindingPatch, finding_to_dict, record_test_run, sync_findings
+from proxy.projects import ProjectCreate, create_workspace_for_user, owned_project, project_to_dict, require_project
 from proxy.regression import (
     BaselineCreate,
     baseline_to_dict,
@@ -72,6 +83,14 @@ MAX_INPUT_CHARS = 50_000
 
 _is_prod = settings.env == "production"
 
+if _is_prod and not settings.jwt_secret:
+    # Phase 2 (D-055): a missing JWT_SECRET in production would issue tokens
+    # signed with a per-process random secret — every restart invalidates
+    # every session, and worse, a multi-instance deployment would have each
+    # instance signing/verifying with a *different* secret. Hard stop, not a
+    # silent fallback (CLAUDE.md: never a silent, insecure default).
+    raise RuntimeError("JWT_SECRET must be set in production. Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"")
+
 app = FastAPI(
     title="SentinelAI",
     # Never expose interactive API docs / raw OpenAPI schema in production — reduces
@@ -92,9 +111,28 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "PATCH"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Phase 2 (D-055): every route requires a valid bearer token except this
+# allowlist. A single choke point, not a per-route opt-in — a new endpoint
+# is authenticated by default, not accidentally left open.
+_PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/v1/auth/signup", "/v1/auth/login"}
+
+
+@app.middleware("http")
+async def require_auth(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return JSONResponse(status_code=401, content={"detail": {"code": "not_authenticated", "message": "Missing bearer token."}})
+    try:
+        decode_token(auth_header[7:])
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)
@@ -111,6 +149,75 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/v1/auth/signup", response_model=AuthResponse)
+def signup(body: SignupRequest):
+    db = get_session()
+    try:
+        if db.query(User).filter(User.email == body.email).first() is not None:
+            raise HTTPException(status_code=409, detail={"code": "email_taken", "message": "An account with this email already exists."})
+        user = User(email=body.email, password_hash=hash_password(body.password))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        create_workspace_for_user(db, user.id)
+        return AuthResponse(access_token=issue_token(user.id), user_id=user.id, email=user.email)
+    finally:
+        db.close()
+
+
+@app.post("/v1/auth/login", response_model=AuthResponse)
+def login(body: LoginRequest):
+    db = get_session()
+    try:
+        user = db.query(User).filter(User.email == body.email.lower()).first()
+        # Same error for "no such user" and "wrong password" — never confirm
+        # whether an email is registered to an unauthenticated caller.
+        if user is None or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Incorrect email or password."})
+        return AuthResponse(access_token=issue_token(user.id), user_id=user.id, email=user.email)
+    finally:
+        db.close()
+
+
+@app.get("/v1/auth/me")
+def get_me(user: User = Depends(get_current_user)):
+    return {"id": user.id, "email": user.email, "created_at": user.created_at}
+
+
+@app.post("/v1/projects")
+def create_project(body: ProjectCreate, user: User = Depends(get_current_user)):
+    db = get_session()
+    try:
+        workspace = db.query(Workspace).filter(Workspace.owner_user_id == user.id).first()
+        if workspace is None:  # defensive — signup always creates one, but never assume
+            workspace = create_workspace_for_user(db, user.id)
+        project = Project(workspace_id=workspace.id, name=body.name, target_type=body.target_type)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        return project_to_dict(project)
+    finally:
+        db.close()
+
+
+@app.get("/v1/projects")
+def list_projects(user: User = Depends(get_current_user)):
+    db = get_session()
+    try:
+        workspace = db.query(Workspace).filter(Workspace.owner_user_id == user.id).first()
+        if workspace is None:
+            return []
+        projects = db.query(Project).filter(Project.workspace_id == workspace.id).order_by(Project.created_at.desc()).all()
+        return [project_to_dict(p) for p in projects]
+    finally:
+        db.close()
+
+
+@app.get("/v1/projects/{project_id}")
+def get_project(project: Project = Depends(require_project)):
+    return project_to_dict(project)
 
 
 @app.get("/quota")
@@ -147,23 +254,28 @@ def run_security_tests(category: str | None = None):
 
 
 @app.post("/v1/findings/sync")
-def sync_security_findings(category: str | None = None):
+def sync_security_findings(category: str | None = None, project: Project = Depends(require_project)):
     """Phase 5 (D-044): runs the full engine suite and opens a Finding for any
     FAIL result that doesn't already have an open one for the same test_id.
     Phase 6 (D-045): also logs every result (any status) to TestRunResult so
     the dashboard has real history to show — the only place that happens.
-    Phase 8 (D-047): optional `category` filter selects a test suite."""
+    Phase 8 (D-047): optional `category` filter selects a test suite.
+    Phase 2 (D-055): requires `?project_id=`, scopes everything written to it."""
     results = run_suite(_select_tests(category))
     db = get_session()
     try:
-        created = sync_findings(db, results)
-        run_id = record_test_run(db, results)
+        created = sync_findings(db, results, project_id=project.id)
+        run_id = record_test_run(db, results, project_id=project.id)
 
         # Phase 11 (D-050): monitoring events — observations, not new findings.
         for f in created:
             record_event(db, event_type=FINDING_OPENED, severity=f.severity, category=f.category,
                          source="findings", model=f.model, summary=f"Finding #{f.id} opened: {f.test_id}.",
                          details={"finding_id": f.id, "test_id": f.test_id})
+        # NOTE (D-055 scoping gap, tracked not silently ignored): Baseline/regression
+        # are not yet project-scoped in this pass — this looks up the single
+        # newest baseline across ALL projects, same as before project isolation
+        # existed. Retrofitting baselines to project_id is a follow-up.
         baseline = db.query(Baseline).order_by(Baseline.created_at.desc()).first()
         if baseline is not None and baseline.run_id != run_id:
             diff = compare_runs(run_snapshot(db, baseline.run_id), run_snapshot(db, run_id))
@@ -381,22 +493,25 @@ def get_technical_report(since: datetime | None = None, until: datetime | None =
 
 
 @app.get("/v1/security-dashboard")
-def security_dashboard():
+def security_dashboard(project: Project = Depends(require_project)):
     """Phase 6 (D-045): aggregate-only summary (no raw attack payloads/model
     output) from what's actually been persisted via /v1/findings/sync. Empty
-    dict fields / zero counts if nothing has run yet — never fabricated."""
+    dict fields / zero counts if nothing has run yet — never fabricated.
+    Phase 2 (D-055): requires `?project_id=`, scoped to that project only."""
     db = get_session()
     try:
-        return build_dashboard_summary(db)
+        return build_dashboard_summary(db, project_id=project.id)
     finally:
         db.close()
 
 
 @app.get("/v1/findings")
-def list_findings(status: str | None = None):
+def list_findings(status: str | None = None, project: Project = Depends(require_project)):
+    """Phase 2 (D-055): requires `?project_id=` — a request for Project A's
+    findings can never return Project B's (spec_V3.md §9)."""
     db = get_session()
     try:
-        query = db.query(Finding).order_by(Finding.created_at.desc())
+        query = db.query(Finding).filter(Finding.project_id == project.id).order_by(Finding.created_at.desc())
         if status:
             query = query.filter(Finding.status == status)
         return [finding_to_dict(f) for f in query.all()]
@@ -404,27 +519,37 @@ def list_findings(status: str | None = None):
         db.close()
 
 
+def _owned_finding(db, finding_id: int, user: User) -> Finding:
+    """Shared ownership check for the two finding_id-in-path endpoints below
+    (get/patch) — a finding's project must belong to a workspace this user
+    owns. 404, not 403, on mismatch — never confirm a finding ID exists to
+    someone who doesn't own its project."""
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if finding is None or finding.project_id is None:
+        raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
+    try:
+        owned_project(db, finding.project_id, user)  # raises 404 if not owned
+    except HTTPException:
+        raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
+    return finding
+
+
 @app.get("/v1/findings/{finding_id}")
-def get_finding(finding_id: int):
+def get_finding(finding_id: int, user: User = Depends(get_current_user)):
     db = get_session()
     try:
-        finding = db.query(Finding).filter(Finding.id == finding_id).first()
-        if finding is None:
-            raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
-        return finding_to_dict(finding)
+        return finding_to_dict(_owned_finding(db, finding_id, user))
     finally:
         db.close()
 
 
 @app.patch("/v1/findings/{finding_id}")
-def update_finding_status(finding_id: int, body: FindingPatch):
+def update_finding_status(finding_id: int, body: FindingPatch, user: User = Depends(get_current_user)):
     """Status-only update. The row is never deleted on resolution — evidence
     and reproduction stay intact regardless of status (spec requirement)."""
     db = get_session()
     try:
-        finding = db.query(Finding).filter(Finding.id == finding_id).first()
-        if finding is None:
-            raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
+        finding = _owned_finding(db, finding_id, user)
         finding.status = body.status
         db.commit()
         db.refresh(finding)
@@ -434,12 +559,19 @@ def update_finding_status(finding_id: int, body: FindingPatch):
 
 
 @app.get("/v1/calls")
-def list_calls(limit: int = 100):
+def list_calls(limit: int = 100, project: Project = Depends(require_project)):
     # Moved here from agents/api.py (Fraud Copilot's now-paused service) so the
     # dashboard's call log doesn't depend on a Fraud Copilot backend being up.
+    # Phase 2 (D-055): requires `?project_id=`, scoped to that project only.
     db = get_session()
     try:
-        rows = db.query(CallLog).order_by(CallLog.created_at.desc()).limit(limit).all()
+        rows = (
+            db.query(CallLog)
+            .filter(CallLog.project_id == project.id)
+            .order_by(CallLog.created_at.desc())
+            .limit(limit)
+            .all()
+        )
         return [
             {
                 "id": r.id,
@@ -464,6 +596,7 @@ def list_calls(limit: int = 100):
 def _log(db, req: GenerateRequest, usage: Usage, guardrails: Guardrails, error_code: str | None) -> None:
     db.add(
         CallLog(
+            project_id=req.project_id,
             session_id=req.session_id,
             operation=req.operation,
             provider=usage.provider,
@@ -480,9 +613,13 @@ def _log(db, req: GenerateRequest, usage: Usage, guardrails: Guardrails, error_c
 
 
 @app.post("/v1/generate", response_model=GenerateResponse)
-def generate(req: GenerateRequest, provider: Provider = Depends(get_provider)):
+def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), user: User = Depends(get_current_user)):
     db = get_session()
     try:
+        # Phase 2 (D-055): project_id arrives in the JSON body (not a query
+        # param), so ownership is checked directly rather than via the
+        # require_project FastAPI-dependency form.
+        owned_project(db, req.project_id, user)
         inbound_text = "\n".join(m.content for m in req.messages)
         # S2/S3 scan untrusted content only — the system prompt is caller-authored and
         # trusted (D-002/D-001), so it must never be run through the injection/PII

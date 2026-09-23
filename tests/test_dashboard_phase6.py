@@ -14,6 +14,10 @@ from proxy.engine.models import TestResult as Result
 from proxy.engine.models import TestStatus as Status
 from proxy.findings import record_test_run, sync_findings
 from proxy.main import app
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _db():
@@ -120,13 +124,13 @@ def test_dashboard_endpoint_empty_then_populated_after_sync(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [fail_test])
     client = TestClient(app)
 
-    empty = client.get("/v1/security-dashboard")
+    empty = client.get("/v1/security-dashboard", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert empty.status_code == 200
     assert empty.json()["total_tests"] == 0
 
-    client.post("/v1/findings/sync")
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
 
-    populated = client.get("/v1/security-dashboard")
+    populated = client.get("/v1/security-dashboard", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert populated.status_code == 200
     body = populated.json()
     assert body["total_tests"] == 1
@@ -151,7 +155,7 @@ def test_dashboard_response_never_includes_raw_attack_payload(monkeypatch):
     )
     monkeypatch.setattr("proxy.main.all_tests", lambda: [fail_test])
     client = TestClient(app)
-    client.post("/v1/findings/sync")
+    client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
 
-    resp = client.get("/v1/security-dashboard")
+    resp = client.get("/v1/security-dashboard", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert "super secret" not in resp.text

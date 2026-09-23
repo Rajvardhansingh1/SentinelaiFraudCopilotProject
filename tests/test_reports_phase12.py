@@ -17,8 +17,17 @@ from proxy.engine.models import TestStatus as Status
 from proxy.findings import sync_findings
 from proxy.main import app
 from proxy.reports import build_executive_report, build_technical_report, executive_markdown, scrub, technical_markdown
+from tests.auth_helpers import auth_headers_and_project
 
 SECRET = "sk-ABCDEFGHIJKLMNOPQRST"  # matches pii_scanner's api_key regex (alnum only after sk-)
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
+
+
+def _sync(client=None, **params):
+    params.setdefault("project_id", PROJECT_ID)
+    return (client or TestClient(app)).post("/v1/findings/sync", params=params, headers=AUTH_HEADERS)
 
 
 def _clear():
@@ -73,7 +82,7 @@ def test_technical_report_on_empty_db_is_explicitly_empty():
 
 def test_executive_report_reflects_real_test_run(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS), _flip_test(Status.FAIL, "flip2")])
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
     db = SessionLocal()
     report = build_executive_report(db)
     db.close()
@@ -89,7 +98,7 @@ def test_technical_report_test_cases_carry_attack_input_when_definition_is_regis
     from proxy.engine.registry import all_tests
 
     real_test_id = all_tests()[0].id
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
     db = SessionLocal()
     report = build_technical_report(db)
     db.close()
@@ -105,7 +114,7 @@ def test_technical_report_handles_a_run_row_whose_definition_no_longer_exists(mo
     registry must not crash the report — attack_input/expected are None,
     definition_available is False, so the report says so honestly."""
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
     db = SessionLocal()
     report = build_technical_report(db)
     db.close()
@@ -133,10 +142,10 @@ def test_severity_distribution_only_counts_open_findings():
 def test_major_changes_reflects_a_real_regression(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
-    client.post("/v1/findings/sync")
-    client.post("/v1/baselines", json={"name": "good"})
+    _sync(client)
+    client.post("/v1/baselines", json={"name": "good"}, headers=AUTH_HEADERS)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
-    client.post("/v1/findings/sync")
+    _sync(client)
 
     db = SessionLocal()
     report = build_executive_report(db)
@@ -147,7 +156,7 @@ def test_major_changes_reflects_a_real_regression(monkeypatch):
 
 def test_period_filters_narrow_the_report(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
 
     future = datetime.now(timezone.utc) + timedelta(days=1)
     db = SessionLocal()
@@ -164,7 +173,7 @@ def test_limitations_flag_inconclusive_and_error_results(monkeypatch):
         "proxy.main.all_tests",
         lambda: [_flip_test(Status.INCONCLUSIVE, "inc"), _flip_test(Status.ERROR, "err")],
     )
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
     db = SessionLocal()
     report = build_executive_report(db)
     db.close()
@@ -175,7 +184,7 @@ def test_limitations_flag_inconclusive_and_error_results(monkeypatch):
 
 def test_limitations_always_present_even_with_all_pass(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
     db = SessionLocal()
     report = build_executive_report(db)
     db.close()
@@ -214,7 +223,7 @@ def test_report_containing_a_configured_key_in_evidence_is_scrubbed(monkeypatch)
         evaluate=lambda ev: (Status.FAIL, f"failed with {key} present"),
     )
     monkeypatch.setattr("proxy.main.all_tests", lambda: [leaking_test])
-    TestClient(app).post("/v1/findings/sync")
+    _sync()
 
     db = SessionLocal()
     exec_report = build_executive_report(db)
@@ -230,13 +239,13 @@ def test_report_containing_a_configured_key_in_evidence_is_scrubbed(monkeypatch)
 
 
 def test_executive_endpoint_json():
-    resp = TestClient(app).get("/v1/reports/executive")
+    resp = TestClient(app).get("/v1/reports/executive", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["report_type"] == "executive"
 
 
 def test_technical_endpoint_markdown_is_plain_text():
-    resp = TestClient(app).get("/v1/reports/technical", params={"format": "md"})
+    resp = TestClient(app).get("/v1/reports/technical", params={"format": "md"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")
     assert resp.text.startswith("# SentinelAI Security Report — Technical")
@@ -253,6 +262,6 @@ def test_executive_endpoint_markdown_no_secrets(monkeypatch):
             evaluate=lambda ev: (Status.FAIL, f"leaked {key}"),
         )],
     )
-    TestClient(app).post("/v1/findings/sync")
-    resp = TestClient(app).get("/v1/reports/executive", params={"format": "md"})
+    _sync()
+    resp = TestClient(app).get("/v1/reports/executive", params={"format": "md"}, headers=AUTH_HEADERS)
     assert key not in resp.text

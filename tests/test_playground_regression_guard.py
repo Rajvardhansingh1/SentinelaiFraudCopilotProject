@@ -15,11 +15,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from frontend.data.sample_attacks import SAMPLE_ATTACKS as PY_ATTACKS
+from proxy.db.session import init_db
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
 
 WEB = Path(__file__).parent.parent / "web" / "lib"
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def _web_presets() -> list[dict]:
@@ -64,7 +69,9 @@ def _generate(client, session_id, content):
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": content}],
             "schema_name": None,
             "grounding_context": None,
+            "project_id": PROJECT_ID,
         },
+        headers=AUTH_HEADERS,
     )
 
 

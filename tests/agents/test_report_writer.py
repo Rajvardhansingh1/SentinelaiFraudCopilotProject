@@ -1,11 +1,19 @@
+import os
 from unittest.mock import patch
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 from agents.report_writer import build_evidence_bundle, write_report
 from fastapi.testclient import TestClient
 
+from proxy.db.session import init_db
 from proxy.main import app, get_provider
 from proxy.middleware import rate_limiter
 from proxy.provider import LLMResponse
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, PROJECT_ID = auth_headers_and_project(TestClient(app))
 
 
 def test_write_report_success():
@@ -50,7 +58,9 @@ def test_report_grounded_scoring_flags_invented_content():
             "operation": "report",
             "messages": [{"role": "user", "content": "write it"}],
             "grounding_context": evidence,
+            "project_id": PROJECT_ID,
         },
+        headers=AUTH_HEADERS,
     )
     assert resp.json()["guardrails"]["hallucination"]["score"] > 0.5
 
@@ -66,6 +76,8 @@ def test_report_grounded_scoring_low_when_faithful():
             "operation": "report",
             "messages": [{"role": "user", "content": "write it"}],
             "grounding_context": evidence,
+            "project_id": PROJECT_ID,
         },
+        headers=AUTH_HEADERS,
     )
     assert resp.json()["guardrails"]["hallucination"]["score"] == 0.0

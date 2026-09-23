@@ -1,8 +1,17 @@
+import os
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 from fastapi.testclient import TestClient
 from frontend.data.sample_attacks import find_cached
 from frontend.lib.health_check import ping_proxy
 
+from proxy.db.session import init_db
 from proxy.main import app
+from tests.auth_helpers import auth_headers_and_project
+
+init_db()
+AUTH_HEADERS, _ = auth_headers_and_project(TestClient(app))
 
 
 def test_ping_proxy_returns_false_when_unreachable(monkeypatch):
@@ -23,7 +32,7 @@ def test_ping_proxy_returns_true_when_healthy():
 
 def test_quota_endpoint_returns_call_count():
     client = TestClient(app)
-    resp = client.get("/quota")
+    resp = client.get("/quota", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert "calls_today" in resp.json()
 
