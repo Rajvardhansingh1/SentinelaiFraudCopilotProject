@@ -46,12 +46,27 @@ test("new user: signup -> create project -> run assessment -> findings -> report
 
   // View Findings -> Recommended Solutions, if the run produced any open finding.
   const firstFindingLink = page.locator("table a").first();
-  if (await firstFindingLink.isVisible().catch(() => false)) {
+  const hasFinding = await firstFindingLink.isVisible().catch(() => false);
+  if (hasFinding) {
     await firstFindingLink.click();
     await expect(page.getByText("Remediation guidance")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Observed")).toBeVisible();
     await expect(page.getByText("Recommendation")).toBeVisible();
   }
+
+  // Remediation center (Phase 6): the same recommendation, aggregated.
+  await page.goto("/remediation");
+  await expect(page).not.toHaveURL(/\/login/);
+  if (hasFinding) {
+    await expect(page.getByRole("button", { name: /show evidence & analysis/i }).first()).toBeVisible({ timeout: 10_000 });
+  }
+
+  // Project settings: declare repo/notes, confirm it round-trips.
+  await page.goto("/projects/settings");
+  await page.getByLabel("Repository URL").fill("https://github.com/example/journey-project");
+  await page.getByLabel("Notes").fill("Created by the Phase 13 e2e journey test.");
+  await page.getByRole("button", { name: /^save$/i }).click();
+  await expect(page.getByText("Saved.")).toBeVisible({ timeout: 10_000 });
 
   // Generate Report
   await page.goto("/reports");

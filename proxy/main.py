@@ -57,6 +57,7 @@ from proxy.findings import FindingPatch, finding_to_dict, record_test_run, sync_
 from proxy.api_keys import ApiKeyCreate, api_key_to_dict, create_api_key, revoke_api_key
 from proxy.projects import (
     ProjectCreate,
+    ProjectUpdate,
     create_workspace_for_user,
     owned_project,
     project_to_dict,
@@ -224,7 +225,10 @@ def create_project(body: ProjectCreate, user: User = Depends(get_current_user)):
         workspace = db.query(Workspace).filter(Workspace.owner_user_id == user.id).first()
         if workspace is None:  # defensive — signup always creates one, but never assume
             workspace = create_workspace_for_user(db, user.id)
-        project = Project(workspace_id=workspace.id, name=body.name, target_type=body.target_type)
+        project = Project(
+            workspace_id=workspace.id, name=body.name, target_type=body.target_type,
+            repo_url=body.repo_url, description=body.description,
+        )
         db.add(project)
         db.commit()
         db.refresh(project)
@@ -249,6 +253,27 @@ def list_projects(user: User = Depends(get_current_user)):
 @app.get("/v1/projects/{project_id}")
 def get_project(project: Project = Depends(require_project)):
     return project_to_dict(project)
+
+
+@app.patch("/v1/projects/{project_id}")
+def update_project(body: ProjectUpdate, project: Project = Depends(require_project)):
+    """Lets a user declare project context (repo_url/description) after
+    creation, or rename it — spec_V3.md §20/§25's only source of real
+    project detail for remediation (Phase 5, D-060)."""
+    db = get_session()
+    try:
+        row = db.query(Project).filter(Project.id == project.id).first()
+        if body.name is not None:
+            row.name = body.name
+        if body.repo_url is not None:
+            row.repo_url = body.repo_url
+        if body.description is not None:
+            row.description = body.description
+        db.commit()
+        db.refresh(row)
+        return project_to_dict(row)
+    finally:
+        db.close()
 
 
 @app.post("/v1/projects/{project_id}/api-keys")
@@ -368,7 +393,7 @@ def sync_security_findings(category: str | None = None, source: str = "dashboard
                              project_id=project.id)
         return {
             "results": results,
-            "findings_created": [finding_to_dict(f) for f in created],
+            "findings_created": [finding_to_dict(f, project_to_dict(project)) for f in created],
         }
     finally:
         db.close()
@@ -629,12 +654,13 @@ def list_findings(status: str | None = None, project: Project = Depends(require_
         query = db.query(Finding).filter(Finding.project_id == project.id).order_by(Finding.created_at.desc())
         if status:
             query = query.filter(Finding.status == status)
-        return [finding_to_dict(f) for f in query.all()]
+        project_dict = project_to_dict(project)
+        return [finding_to_dict(f, project_dict) for f in query.all()]
     finally:
         db.close()
 
 
-def _owned_finding(db, finding_id: int, user: User) -> Finding:
+def _owned_finding(db, finding_id: int, user: User) -> tuple[Finding, Project]:
     """Shared ownership check for the two finding_id-in-path endpoints below
     (get/patch) — a finding's project must belong to a workspace this user
     owns. 404, not 403, on mismatch — never confirm a finding ID exists to
@@ -643,17 +669,18 @@ def _owned_finding(db, finding_id: int, user: User) -> Finding:
     if finding is None or finding.project_id is None:
         raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
     try:
-        owned_project(db, finding.project_id, user)  # raises 404 if not owned
+        project = owned_project(db, finding.project_id, user)  # raises 404 if not owned
     except HTTPException:
         raise HTTPException(status_code=404, detail={"code": "finding_not_found", "message": "No such finding."})
-    return finding
+    return finding, project
 
 
 @app.get("/v1/findings/{finding_id}")
 def get_finding(finding_id: int, user: User = Depends(get_current_user)):
     db = get_session()
     try:
-        return finding_to_dict(_owned_finding(db, finding_id, user))
+        finding, project = _owned_finding(db, finding_id, user)
+        return finding_to_dict(finding, project_to_dict(project))
     finally:
         db.close()
 
@@ -664,11 +691,11 @@ def update_finding_status(finding_id: int, body: FindingPatch, user: User = Depe
     and reproduction stay intact regardless of status (spec requirement)."""
     db = get_session()
     try:
-        finding = _owned_finding(db, finding_id, user)
+        finding, project = _owned_finding(db, finding_id, user)
         finding.status = body.status
         db.commit()
         db.refresh(finding)
-        return finding_to_dict(finding)
+        return finding_to_dict(finding, project_to_dict(project))
     finally:
         db.close()
 

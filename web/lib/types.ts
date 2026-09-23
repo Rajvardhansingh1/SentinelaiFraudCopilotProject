@@ -194,6 +194,7 @@ export interface Remediation {
   additional_controls: string[];
   verification_guidance: string;
   confidence: "HIGH CONFIDENCE" | "LIKELY" | "REQUIRES INVESTIGATION" | "INSUFFICIENT EVIDENCE";
+  project_context: string[];
 }
 
 export interface Finding {

@@ -64,6 +64,11 @@ class Project(Base):
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), index=True)
     name: Mapped[str] = mapped_column(String)
     target_type: Mapped[str] = mapped_column(String, default="model")  # model|application|agent|api|service
+    # Phase 5 (D-060): optional, user-declared project context — spec_V3.md
+    # §20 says use real project info when Sentinel has it; these are the only
+    # source of truth for that, never inferred or guessed at.
+    repo_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
 
 

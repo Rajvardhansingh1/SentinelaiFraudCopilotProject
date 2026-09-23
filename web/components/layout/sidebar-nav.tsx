@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/playground", label: "Playground" },
   { href: "/security", label: "Security Tests" },
   { href: "/findings", label: "Findings" },
+  { href: "/remediation", label: "Remediation" },
   { href: "/regression", label: "Regression" },
   { href: "/monitoring", label: "Monitoring" },
   { href: "/agents", label: "Agent Security" },

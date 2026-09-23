@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/security/status-badge";
@@ -188,6 +189,22 @@ export function DashboardSummary() {
               </table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recommendations & reports</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-4 text-sm">
+          <Link href="/remediation" className="text-accent-teal underline underline-offset-2">
+            {summary.open_findings > 0
+              ? `View ${summary.open_findings} recommended solution${summary.open_findings === 1 ? "" : "s"} →`
+              : "Remediation center →"}
+          </Link>
+          <Link href="/reports" className="text-accent-teal underline underline-offset-2">
+            Generate a report →
+          </Link>
         </CardContent>
       </Card>
     </div>

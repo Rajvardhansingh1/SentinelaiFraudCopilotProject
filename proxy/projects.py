@@ -20,6 +20,14 @@ TARGET_TYPES = ("model", "application", "agent", "api", "service")
 class ProjectCreate(BaseModel):
     name: str
     target_type: str = "model"
+    repo_url: str | None = None
+    description: str | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    repo_url: str | None = None
+    description: str | None = None
 
 
 def create_workspace_for_user(db, user_id: int, name: str = "My Workspace") -> Workspace:
@@ -36,6 +44,8 @@ def project_to_dict(p: Project) -> dict:
         "workspace_id": p.workspace_id,
         "name": p.name,
         "target_type": p.target_type,
+        "repo_url": p.repo_url,
+        "description": p.description,
         "created_at": p.created_at,
     }
 

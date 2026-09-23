@@ -18,6 +18,9 @@ export default function NewProjectPage() {
   const { createProject } = useAuth();
   const [name, setName] = useState("");
   const [targetType, setTargetType] = useState("model");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [repoUrl, setRepoUrl] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -25,7 +28,7 @@ export default function NewProjectPage() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    const result = await createProject(name, targetType);
+    const result = await createProject(name, targetType, repoUrl, description);
     setSubmitting(false);
     if (result.status === "error") {
       setError(result.message);
@@ -70,6 +73,41 @@ export default function NewProjectPage() {
                 ))}
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="text-xs text-text-primary/60 underline underline-offset-2 hover:text-accent-teal"
+            >
+              {showAdvanced ? "Hide" : "Show"} advanced (optional)
+            </button>
+            {showAdvanced && (
+              <div className="space-y-3 rounded-md border border-bg-surface bg-bg-surface/30 p-3">
+                <div>
+                  <label className="mb-1 block text-sm text-text-primary/80" htmlFor="repo_url">Repository URL</label>
+                  <input
+                    id="repo_url"
+                    placeholder="https://github.com/you/project"
+                    value={repoUrl}
+                    onChange={(e) => setRepoUrl(e.target.value)}
+                    className="w-full rounded-md border border-slate-600 bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm text-text-primary/80" htmlFor="description">Notes</label>
+                  <textarea
+                    id="description"
+                    placeholder="What this project does, anything Sentinel should know."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full rounded-md border border-slate-600 bg-bg-surface px-3 py-2 text-sm text-text-primary"
+                    rows={3}
+                  />
+                </div>
+                <p className="text-xs text-text-primary/50">
+                  Used only to make remediation guidance more specific — never guessed, only shown when you provide it.
+                </p>
+              </div>
+            )}
             {error && (
               <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
                 {error}

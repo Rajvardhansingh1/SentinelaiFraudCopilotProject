@@ -1046,6 +1046,28 @@ Real bugs found via the user's own live run (not synthetic tests), all violating
 
 ---
 
+## D-060 — Phase 5/6: real project context (repo_url/description) + Phase 6 remediation center + Phase 12 closing checklist gaps
+
+**Date:** 2026-09-24
+**Status:** Accepted
+
+**Context:** A direct pass against spec_V3.md §68's acceptance checklist found real gaps beyond D-055-D-059: remediation had no source of real project context to draw on (§20 wants Sentinel to use project info "where authorized" — nothing gave it any); the dashboard's "shows recommendations"/"shows reports" checklist items were only one click away via nav, not literally present; Phase 6's "remediation center" (aggregated recommendations, not one-finding-at-a-time) didn't exist; and the dependency-security and log-sensitive-data checklist items had never actually been run/reviewed, only assumed clean.
+
+**Decision:**
+- `Project` gains optional `repo_url`/`description` — the *only* source of project context remediation is allowed to reference (never inferred). `PATCH /v1/projects/{id}` lets a user set them after creation, matching §10 ("advanced configuration can happen later").
+- `remediation_for(category, project=None)` now appends a `project_context: list[str]` — plain restatements of whatever the project declared, nothing invented, empty list when nothing was declared. Threaded through `finding_to_dict()`, both report builders, and their markdown output.
+- New `/remediation` page (Phase 6): every open finding's recommendation, worst severity first, evidence/analysis expandable inline, "Retest all," link to the full finding. The Findings page already had one-at-a-time detail; this is the aggregate view spec_V3.md §29 asks for.
+- New `/projects/settings` page to declare/edit `repo_url`/`description` post-creation.
+- Dashboard summary gained an explicit "Recommendations & reports" card linking to both — closes the literal checklist wording, not just "reachable via nav."
+- **Dependency security review actually run**: `pip-audit` against the real installed environment (not a fresh re-resolution, which gave a stale false positive on `cryptography` — the installed venv already has the patched 50.0.1). Found 4 real CVEs in `chromadb` 1.5.9 (CVE-2026-45829/45830/45831/45833) — all affect ChromaDB's own HTTP server mode, multi-tenant RBAC, and `trust_remote_code` model loading. This app uses `chromadb.PersistentClient` only — embedded, in-process, no server, no RBAC, no remote-code loading — confirmed via `proxy/eval/grounding.py`. Assessed as not exploitable in this deployment, documented rather than silently ignored; no upstream fix exists yet regardless.
+- **Logs reviewed**: every `logging`/`print` call site in `proxy/`, `gateway/`, `scripts/` inspected by hand. Clean — `proxy/events.py`/`proxy/main.py`'s exception logs never include request bodies; `gateway/pipeline.py`'s audit log stores a SHA-256 fingerprint by default and only stores redacted raw content when an operator explicitly opts in (`GATEWAY_STORE_RAW_CONTENT`), confirming the design already documented in D-049/D-050 was actually implemented as described, not just claimed.
+
+**Rationale:** Once real gaps were found by re-reading the acceptance checklist line by line rather than trusting an earlier summary, they belonged in code, not just a status note — "done" per spec_V3.md §71's Definition of Done means the checklist item itself is true, not merely close.
+
+**Consequence:** 8 new backend tests (`tests/test_project_context.py`). Full backend suite: 366 passed, 3 skipped, 0 failed. Frontend: `tsc` clean, production build succeeds (18 routes), and the live Playwright e2e journey (`full-journey.spec.ts`) now also exercises `/remediation` and `/projects/settings` against a real running proxy — all passing.
+
+---
+
 When an open decision is resolved:
 1. Add a dated decision entry.
 2. Mark the OD item resolved.

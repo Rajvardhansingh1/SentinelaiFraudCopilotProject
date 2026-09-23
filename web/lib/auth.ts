@@ -119,6 +119,8 @@ export interface Project {
   workspace_id: number;
   name: string;
   target_type: string;
+  repo_url: string | null;
+  description: string | null;
   created_at: string;
 }
 
@@ -134,13 +136,35 @@ export async function listProjects(): Promise<Project[]> {
 
 export async function createProject(
   name: string,
-  targetType = "model"
+  targetType = "model",
+  repoUrl?: string,
+  description?: string
 ): Promise<{ status: "ok"; data: Project } | { status: "error"; message: string }> {
   try {
     const resp = await fetch(`${PROXY_BASE_URL}/v1/projects`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ name, target_type: targetType }),
+      body: JSON.stringify({ name, target_type: targetType, repo_url: repoUrl || null, description: description || null }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { status: "error", message: body?.detail?.message ?? `Failed (${resp.status})` };
+    }
+    return { status: "ok", data: (await resp.json()) as Project };
+  } catch (err) {
+    return { status: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function updateProject(
+  projectId: number,
+  fields: { name?: string; repo_url?: string; description?: string }
+): Promise<{ status: "ok"; data: Project } | { status: "error"; message: string }> {
+  try {
+    const resp = await fetch(`${PROXY_BASE_URL}/v1/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(fields),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));

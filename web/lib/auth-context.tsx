@@ -24,7 +24,12 @@ interface AuthState {
   signup: (email: string, password: string) => Promise<{ status: "ok" } | { status: "error"; message: string }>;
   logout: () => void;
   refreshProjects: () => Promise<void>;
-  createProject: (name: string, targetType?: string) => Promise<{ status: "ok" } | { status: "error"; message: string }>;
+  createProject: (
+    name: string,
+    targetType?: string,
+    repoUrl?: string,
+    description?: string
+  ) => Promise<{ status: "ok" } | { status: "error"; message: string }>;
   setActiveProject: (id: number) => void;
 }
 
@@ -93,8 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveProjectIdState(id);
   }
 
-  async function createProject(name: string, targetType = "model") {
-    const result = await createProjectRequest(name, targetType);
+  async function createProject(name: string, targetType = "model", repoUrl?: string, description?: string) {
+    const result = await createProjectRequest(name, targetType, repoUrl, description);
     if (result.status === "error") return result;
     await refreshProjects();
     setActiveProject(result.data.id);

@@ -46,7 +46,10 @@ def _finding_fields(result: TestResult) -> dict:
     }
 
 
-def finding_to_dict(f: Finding) -> dict:
+def finding_to_dict(f: Finding, project: dict | None = None) -> dict:
+    """`project` (project_to_dict()-shaped, optional) lets remediation carry
+    real project context (Phase 5, D-060) — omitted, remediation still works,
+    just without the project_context notes."""
     return {
         "id": f.id,
         "project_id": f.project_id,
@@ -61,7 +64,7 @@ def finding_to_dict(f: Finding) -> dict:
         "provider": f.provider,
         "model": f.model,
         "status": f.status,
-        "remediation": remediation_for(f.category),
+        "remediation": remediation_for(f.category, project),
         "created_at": f.created_at,
         "updated_at": f.updated_at,
     }

@@ -41,6 +41,8 @@ _TABLES_NEEDING_PROJECT_ID = [
 # nullable/defaulted, never a destructive schema change.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("test_run_results", "execution_source", "VARCHAR DEFAULT 'dashboard'"),
+    ("projects", "repo_url", "VARCHAR"),
+    ("projects", "description", "VARCHAR"),
 ]
 
 

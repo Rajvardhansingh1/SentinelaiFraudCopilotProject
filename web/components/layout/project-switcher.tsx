@@ -32,6 +32,11 @@ export function ProjectSwitcher() {
         <Link href="/projects/new" className="text-text-primary/60 hover:text-accent-teal">
           + New project
         </Link>
+        {activeProjectId !== null && (
+          <Link href="/projects/settings" className="text-text-primary/60 hover:text-accent-teal">
+            Settings
+          </Link>
+        )}
         <button onClick={logout} className="text-text-primary/60 hover:text-accent-teal">
           Log out
         </button>

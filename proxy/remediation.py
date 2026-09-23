@@ -24,6 +24,7 @@ class Remediation(TypedDict):
     additional_controls: list[str]
     verification_guidance: str
     confidence: str  # HIGH CONFIDENCE | LIKELY | REQUIRES INVESTIGATION | INSUFFICIENT EVIDENCE
+    project_context: list[str]  # filled in by remediation_for(), never in the static tables below
 
 
 _REMEDIATION: dict[str, Remediation] = {
@@ -108,8 +109,25 @@ _DEFAULT: Remediation = {
 }
 
 
-def remediation_for(category: str) -> Remediation:
-    return _REMEDIATION.get(category, _DEFAULT)
+def _project_context_notes(project: dict | None) -> list[str]:
+    """Phase 5 (D-060): spec_V3.md §20/§25 — use real project context when
+    Sentinel has it, never invent it. `project` is a project_to_dict()-shaped
+    dict (or None). Only ever restates fields the user actually declared on
+    the project (name, target_type, repo_url, description) — nothing here is
+    inferred, so there is nothing to mark uncertain."""
+    if project is None:
+        return []
+    notes = [f"Target: \"{project['name']}\" ({project['target_type']})."]
+    if project.get("repo_url"):
+        notes.append(f"Repository: {project['repo_url']}")
+    if project.get("description"):
+        notes.append(f"Project notes: {project['description']}")
+    return notes
+
+
+def remediation_for(category: str, project: dict | None = None) -> Remediation:
+    base = _REMEDIATION.get(category, _DEFAULT)
+    return {**base, "project_context": _project_context_notes(project)}
 
 
 def remediation_summary(category: str) -> str:

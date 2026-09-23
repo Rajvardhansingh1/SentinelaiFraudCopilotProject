@@ -128,6 +128,16 @@ export default function FindingDetailPage() {
             <p className="font-medium text-text-primary">Verification</p>
             <p className="text-text-primary/80">{finding.remediation.verification_guidance}</p>
           </div>
+          {finding.remediation.project_context.length > 0 && (
+            <div>
+              <p className="font-medium text-text-primary">Project context</p>
+              <ul className="list-inside list-disc text-text-primary/80">
+                {finding.remediation.project_context.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </CardContent>
       </Card>
 

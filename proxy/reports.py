@@ -22,15 +22,23 @@ from sqlalchemy.orm import Session
 import proxy.engine.plugins  # noqa: F401 — registers test definitions
 from proxy.agent_policy import load_profiles
 from proxy.config import settings
-from proxy.db.models import Baseline, Finding, SecurityEvent, TestRunResult
+from proxy.db.models import Baseline, Finding, Project, SecurityEvent, TestRunResult
 from proxy.engine.registry import all_tests
 from proxy.findings import OPEN_LIKE_STATUSES
 from proxy.middleware.pii_scanner import redact_pii
+from proxy.projects import project_to_dict
 from proxy.regression import compare_runs, run_snapshot
 from proxy.remediation import remediation_for
 
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 _KEY_FINDINGS_LIMIT = 10
+
+
+def _project_dict_or_none(db: Session, project_id: int | None) -> dict | None:
+    if project_id is None:
+        return None
+    project = db.query(Project).filter(Project.id == project_id).first()
+    return project_to_dict(project) if project else None
 
 
 # --- secret hygiene ---
@@ -105,6 +113,7 @@ def _period(db: Session, since, until, project_id: int | None = None) -> dict:
 
 
 def build_executive_report(db: Session, since: datetime | None = None, until: datetime | None = None, project_id: int | None = None) -> dict:
+    project_dict = _project_dict_or_none(db, project_id)
     latest = _latest_run(db, since, until, project_id=project_id)
     status_counts = Counter(r.status for r in latest)
 
@@ -171,7 +180,7 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
         ),
         "key_findings": [
             {"id": f.id, "title": f.title, "severity": f.severity, "category": f.category, "status": f.status,
-             "remediation": remediation_for(f.category)}
+             "remediation": remediation_for(f.category, project_dict)}
             for f in key
         ],
         "severity_distribution": dict(Counter(f.severity for f in open_findings)),
@@ -187,6 +196,7 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
 
 
 def build_technical_report(db: Session, since: datetime | None = None, until: datetime | None = None, project_id: int | None = None) -> dict:
+    project_dict = _project_dict_or_none(db, project_id)
     definitions = {t.id: t for t in all_tests()}
     latest = _latest_run(db, since, until, project_id=project_id)
 
@@ -212,7 +222,7 @@ def build_technical_report(db: Session, since: datetime | None = None, until: da
                     "command": f"POST /v1/security-tests/run?category={r.category}",
                     "definition_available": d is not None,
                 },
-                "remediation": remediation_for(r.category),
+                "remediation": remediation_for(r.category, project_dict),
             }
         )
 
@@ -242,7 +252,7 @@ def build_technical_report(db: Session, since: datetime | None = None, until: da
                 "model": f.model,
                 "created_at": f.created_at,
                 "updated_at": f.updated_at,
-                "remediation": remediation_for(f.category),
+                "remediation": remediation_for(f.category, project_dict),
             }
             for f in findings
         ],
@@ -349,6 +359,8 @@ def technical_markdown(r: dict) -> str:
             f"- Verification: {rem['verification_guidance']}",
             f"- Confidence: {rem['confidence']}",
         ]
+        if rem["project_context"]:
+            lines.append(f"- Project context: {' '.join(rem['project_context'])}")
     return "\n".join(lines)
 
 
