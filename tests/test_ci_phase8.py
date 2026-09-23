@@ -104,19 +104,38 @@ def test_human_summary_lists_matching_test_ids_and_target():
 # --- CLI entrypoint (HTTP mocked) ---
 
 
+class _FakeResp:
+    def __init__(self, body, status_code=200):
+        self._body = body
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+def _fake_post_factory(results, capture=None):
+    """Dispatches on URL: auth bootstrap (signup/projects) vs. findings/sync,
+    matching the real sequence _bootstrap_auth() then _fetch_results() make."""
+
+    def fake_post(url, json=None, params=None, headers=None, timeout=None):
+        if url.endswith("/v1/auth/signup"):
+            return _FakeResp({"access_token": "fake-token"})
+        if url.endswith("/v1/projects"):
+            return _FakeResp({"id": 1})
+        if capture is not None:
+            capture["params"] = params
+        return _FakeResp({"results": results})
+
+    return fake_post
+
+
 def test_cli_exits_zero_when_all_pass(monkeypatch, tmp_path):
     from scripts import sentinel_ci
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": [_r("a", "PASS")]}
-
-    monkeypatch.setattr(sentinel_ci.requests, "post", lambda *a, **kw: FakeResp())
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([_r("a", "PASS")]))
 
     exit_code = sentinel_ci.main(["--target", "http://fake"])
     assert exit_code == 0
@@ -125,16 +144,7 @@ def test_cli_exits_zero_when_all_pass(monkeypatch, tmp_path):
 def test_cli_exits_nonzero_when_a_test_fails(monkeypatch):
     from scripts import sentinel_ci
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": [_r("a", "FAIL")]}
-
-    monkeypatch.setattr(sentinel_ci.requests, "post", lambda *a, **kw: FakeResp())
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([_r("a", "FAIL")]))
 
     exit_code = sentinel_ci.main(["--target", "http://fake"])
     assert exit_code == 1
@@ -143,16 +153,7 @@ def test_cli_exits_nonzero_when_a_test_fails(monkeypatch):
 def test_cli_writes_json_and_markdown_outputs(monkeypatch, tmp_path):
     from scripts import sentinel_ci
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": [_r("a", "PASS")]}
-
-    monkeypatch.setattr(sentinel_ci.requests, "post", lambda *a, **kw: FakeResp())
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([_r("a", "PASS")]))
 
     json_out = tmp_path / "results.json"
     md_out = tmp_path / "summary.md"
@@ -170,16 +171,7 @@ def test_cli_writes_json_and_markdown_outputs(monkeypatch, tmp_path):
 def test_cli_respects_fail_on_severity_flag(monkeypatch):
     from scripts import sentinel_ci
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": [_r("a", "FAIL", severity="low")]}
-
-    monkeypatch.setattr(sentinel_ci.requests, "post", lambda *a, **kw: FakeResp())
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([_r("a", "FAIL", severity="low")]))
 
     # low severity FAIL is excluded when only critical/high count.
     exit_code = sentinel_ci.main(["--target", "http://fake", "--fail-on-severity", "critical,high"])
@@ -190,24 +182,10 @@ def test_cli_passes_category_filter_as_query_param(monkeypatch):
     from scripts import sentinel_ci
 
     captured = {}
-
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": []}
-
-    def fake_post(url, params=None, timeout=None):
-        captured["params"] = params
-        return FakeResp()
-
-    monkeypatch.setattr(sentinel_ci.requests, "post", fake_post)
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([], capture=captured))
 
     sentinel_ci.main(["--target", "http://fake", "--category", "jailbreak,prompt_injection"])
-    assert captured["params"] == {"category": "jailbreak,prompt_injection"}
+    assert captured["params"] == {"project_id": 1, "category": "jailbreak,prompt_injection"}
 
 
 # --- endpoint-level test-suite selection (D-047) ---
@@ -251,15 +229,6 @@ def test_findings_sync_endpoint_also_respects_category_filter():
 def test_cli_skips_regression_check_gracefully_when_no_baseline(monkeypatch, capsys):
     from scripts import sentinel_ci
 
-    class FakePostResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": [_r("a", "PASS")]}
-
     class FakeGetResp:
         status_code = 404
         text = "not found"
@@ -267,7 +236,7 @@ def test_cli_skips_regression_check_gracefully_when_no_baseline(monkeypatch, cap
         def json(self):
             return {"detail": {"code": "baseline_not_found", "message": "No baseline exists yet."}}
 
-    monkeypatch.setattr(sentinel_ci.requests, "post", lambda *a, **kw: FakePostResp())
+    monkeypatch.setattr(sentinel_ci.requests, "post", _fake_post_factory([_r("a", "PASS")]))
     monkeypatch.setattr(sentinel_ci.requests, "get", lambda *a, **kw: FakeGetResp())
 
     exit_code = sentinel_ci.main(["--target", "http://fake", "--check-regression"])

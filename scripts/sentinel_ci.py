@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import sys
 from pathlib import Path
 
@@ -27,15 +28,31 @@ import requests
 from proxy.ci import CIPolicy, evaluate, format_human_summary
 
 
-def _fetch_results(target: str, category: str | None) -> list[dict]:
-    params = {"category": category} if category else {}
-    resp = requests.post(f"{target}/v1/findings/sync", params=params, timeout=120)
+def _bootstrap_auth(target: str) -> dict:
+    """Phase 2 (D-055): every request now needs a bearer token. CI has no
+    durable identity, so it signs up a throwaway user + project each run —
+    keeps sentinel_ci's "no API keys needed" guarantee intact."""
+    email = f"ci-{secrets.token_hex(8)}@sentinelai.local"
+    password = secrets.token_hex(16)
+    signup = requests.post(f"{target}/v1/auth/signup", json={"email": email, "password": password}, timeout=30)
+    signup.raise_for_status()
+    headers = {"Authorization": f"Bearer {signup.json()['access_token']}"}
+    project = requests.post(f"{target}/v1/projects", json={"name": "CI"}, headers=headers, timeout=30)
+    project.raise_for_status()
+    return {"headers": headers, "project_id": project.json()["id"]}
+
+
+def _fetch_results(target: str, category: str | None, auth: dict) -> list[dict]:
+    params = {"project_id": auth["project_id"]}
+    if category:
+        params["category"] = category
+    resp = requests.post(f"{target}/v1/findings/sync", params=params, headers=auth["headers"], timeout=120)
     resp.raise_for_status()
     return resp.json()["results"]
 
 
-def _fetch_regression_report(target: str) -> dict | None:
-    resp = requests.get(f"{target}/v1/regression-report", timeout=60)
+def _fetch_regression_report(target: str, auth: dict) -> dict | None:
+    resp = requests.get(f"{target}/v1/regression-report", headers=auth["headers"], timeout=60)
     if resp.status_code == 200:
         return resp.json()
     if resp.status_code in (404, 409):
@@ -63,11 +80,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
-    results = _fetch_results(args.target, args.category)
+    auth = _bootstrap_auth(args.target)
+    results = _fetch_results(args.target, args.category, auth)
 
     regression_report = None
     if args.check_regression:
-        regression_report = _fetch_regression_report(args.target)
+        regression_report = _fetch_regression_report(args.target, auth)
 
     policy = CIPolicy(
         fail_on_statuses=frozenset(s.strip() for s in args.fail_on_status.split(",") if s.strip()),
