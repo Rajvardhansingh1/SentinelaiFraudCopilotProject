@@ -34,9 +34,12 @@ class ApprovalError(Exception):
         self.message = message
 
 
-def evaluate_and_record(db: Session, profile: AgentProfile, request: ActionRequest) -> tuple[PolicyDecision, AgentActionLog]:
+def evaluate_and_record(
+    db: Session, profile: AgentProfile, request: ActionRequest, project_id: int | None = None
+) -> tuple[PolicyDecision, AgentActionLog]:
     decision = evaluate(profile, request)
     row = AgentActionLog(
+        project_id=project_id,
         agent_id=profile.agent_id,
         tool=canon(request.tool),
         action=canon(request.action),
@@ -72,6 +75,7 @@ def resolve_approval(db: Session, log_id: int, approver: str, approve: bool) -> 
 def action_log_to_dict(r: AgentActionLog) -> dict:
     return {
         "id": r.id,
+        "project_id": r.project_id,
         "agent_id": r.agent_id,
         "tool": r.tool,
         "action": r.action,

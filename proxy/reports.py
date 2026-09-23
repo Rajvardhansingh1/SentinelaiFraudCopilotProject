@@ -12,6 +12,8 @@ was captured in stored evidence."""
 
 from __future__ import annotations
 
+import csv
+import io
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -68,17 +70,26 @@ def _in_period(query, column, since: datetime | None, until: datetime | None):
     return query
 
 
-def _latest_run(db: Session, since, until) -> list[TestRunResult]:
-    newest = _in_period(db.query(TestRunResult), TestRunResult.executed_at, since, until).order_by(
+def _latest_run(db: Session, since, until, project_id: int | None = None) -> list[TestRunResult]:
+    query = db.query(TestRunResult)
+    if project_id is not None:
+        query = query.filter(TestRunResult.project_id == project_id)
+    newest = _in_period(query, TestRunResult.executed_at, since, until).order_by(
         TestRunResult.executed_at.desc()
     ).first()
     if newest is None:
         return []
-    return db.query(TestRunResult).filter(TestRunResult.run_id == newest.run_id).all()
+    run_query = db.query(TestRunResult).filter(TestRunResult.run_id == newest.run_id)
+    if project_id is not None:
+        run_query = run_query.filter(TestRunResult.project_id == project_id)
+    return run_query.all()
 
 
-def _period(db: Session, since, until) -> dict:
-    runs = _in_period(db.query(TestRunResult), TestRunResult.executed_at, since, until)
+def _period(db: Session, since, until, project_id: int | None = None) -> dict:
+    query = db.query(TestRunResult)
+    if project_id is not None:
+        query = query.filter(TestRunResult.project_id == project_id)
+    runs = _in_period(query, TestRunResult.executed_at, since, until)
     first = runs.order_by(TestRunResult.executed_at.asc()).first()
     last = runs.order_by(TestRunResult.executed_at.desc()).first()
     return {
@@ -93,17 +104,25 @@ def _period(db: Session, since, until) -> dict:
 # --- executive ---
 
 
-def build_executive_report(db: Session, since: datetime | None = None, until: datetime | None = None) -> dict:
-    latest = _latest_run(db, since, until)
+def build_executive_report(db: Session, since: datetime | None = None, until: datetime | None = None, project_id: int | None = None) -> dict:
+    latest = _latest_run(db, since, until, project_id=project_id)
     status_counts = Counter(r.status for r in latest)
 
-    open_findings = db.query(Finding).filter(Finding.status.in_(OPEN_LIKE_STATUSES)).all()
+    findings_query = db.query(Finding)
+    events_query = db.query(SecurityEvent)
+    baseline_query = db.query(Baseline)
+    if project_id is not None:
+        findings_query = findings_query.filter(Finding.project_id == project_id)
+        events_query = events_query.filter(SecurityEvent.project_id == project_id)
+        baseline_query = baseline_query.filter(Baseline.project_id == project_id)
+
+    open_findings = findings_query.filter(Finding.status.in_(OPEN_LIKE_STATUSES)).all()
     key = sorted(open_findings, key=lambda f: (-_SEVERITY_RANK.get(f.severity, 0), f.created_at))[:_KEY_FINDINGS_LIMIT]
 
-    all_findings = db.query(Finding).all()
-    new_in_period = _in_period(db.query(Finding), Finding.created_at, since, until).count()
+    all_findings = findings_query.all()
+    new_in_period = _in_period(findings_query, Finding.created_at, since, until).count()
     resolved_in_period = _in_period(
-        db.query(Finding).filter(Finding.status == "RESOLVED"), Finding.updated_at, since, until
+        findings_query.filter(Finding.status == "RESOLVED"), Finding.updated_at, since, until
     ).count()
 
     major_changes: dict = {
@@ -114,7 +133,7 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
         "findings_opened_in_period": new_in_period,
         "findings_resolved_in_period": resolved_in_period,
     }
-    baseline = db.query(Baseline).order_by(Baseline.created_at.desc()).first()
+    baseline = baseline_query.order_by(Baseline.created_at.desc()).first()
     if baseline is not None and latest and baseline.run_id != latest[0].run_id:
         diff = compare_runs(run_snapshot(db, baseline.run_id), run_snapshot(db, latest[0].run_id))
         major_changes.update(
@@ -124,7 +143,7 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
             provider_config_changed=diff["provider_config_changed"],
         )
 
-    events = _in_period(db.query(SecurityEvent), SecurityEvent.created_at, since, until).all()
+    events = _in_period(events_query, SecurityEvent.created_at, since, until).all()
 
     limitations = ["Passing tests show these specific attacks were caught — they do not prove the system is secure."]
     if status_counts.get("INCONCLUSIVE"):
@@ -137,7 +156,7 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
     report = {
         "report_type": "executive",
         "generated_at": datetime.now(timezone.utc),
-        "period": _period(db, since, until),
+        "period": _period(db, since, until, project_id=project_id),
         "scope": {
             "tests_in_latest_run": len(latest),
             "categories": sorted({r.category for r in latest}),
@@ -167,9 +186,9 @@ def build_executive_report(db: Session, since: datetime | None = None, until: da
 # --- technical ---
 
 
-def build_technical_report(db: Session, since: datetime | None = None, until: datetime | None = None) -> dict:
+def build_technical_report(db: Session, since: datetime | None = None, until: datetime | None = None, project_id: int | None = None) -> dict:
     definitions = {t.id: t for t in all_tests()}
-    latest = _latest_run(db, since, until)
+    latest = _latest_run(db, since, until, project_id=project_id)
 
     test_cases = []
     for r in sorted(latest, key=lambda r: (r.category, r.test_id)):
@@ -196,11 +215,14 @@ def build_technical_report(db: Session, since: datetime | None = None, until: da
             }
         )
 
-    findings = _in_period(db.query(Finding), Finding.created_at, since, until).order_by(Finding.created_at.desc()).all()
+    findings_query = db.query(Finding)
+    if project_id is not None:
+        findings_query = findings_query.filter(Finding.project_id == project_id)
+    findings = _in_period(findings_query, Finding.created_at, since, until).order_by(Finding.created_at.desc()).all()
     report = {
         "report_type": "technical",
         "generated_at": datetime.now(timezone.utc),
-        "period": _period(db, since, until),
+        "period": _period(db, since, until, project_id=project_id),
         "latest_run_id": latest[0].run_id if latest else None,
         "test_cases": test_cases,
         "findings": [
@@ -318,3 +340,15 @@ def technical_markdown(r: dict) -> str:
             f"- Remediation: {f['remediation']}",
         ]
     return "\n".join(lines)
+
+
+def technical_csv(r: dict) -> str:
+    """Phase 10 (§41): a machine-readable format alongside JSON/Markdown —
+    one row per finding, for import into a spreadsheet or ticket tracker."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["id", "test_id", "title", "category", "severity", "status", "affected_target", "created_at", "updated_at", "remediation"])
+    for f in r["findings"]:
+        writer.writerow([f["id"], f["test_id"], f["title"], f["category"], f["severity"], f["status"],
+                          f["affected_target"], _ts(f["created_at"]), _ts(f["updated_at"]), f["remediation"]])
+    return buf.getvalue()

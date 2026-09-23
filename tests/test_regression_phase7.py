@@ -204,7 +204,7 @@ def test_regression_report_endpoint_detects_a_real_regression(monkeypatch):
     client = TestClient(app)
 
     client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
-    created = client.post("/v1/baselines", json={"name": "good state"}, headers=AUTH_HEADERS)
+    created = client.post("/v1/baselines", json={"name": "good state"}, params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert created.status_code == 200
 
     # Same test now fails — a real regression.
@@ -212,7 +212,7 @@ def test_regression_report_endpoint_detects_a_real_regression(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [failing])
     client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
 
-    report = client.get("/v1/regression-report", headers=AUTH_HEADERS)
+    report = client.get("/v1/regression-report", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert report.status_code == 200
     body = report.json()
     assert [e["test_id"] for e in body["regressions"]] == ["flip"]
@@ -222,7 +222,7 @@ def test_regression_report_endpoint_detects_a_real_regression(monkeypatch):
 
 def test_baseline_endpoint_409s_when_no_run_recorded():
     client = TestClient(app)
-    resp = client.post("/v1/baselines", json={"name": "nothing yet"}, headers=AUTH_HEADERS)
+    resp = client.post("/v1/baselines", json={"name": "nothing yet"}, params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "no_run_to_baseline"
 
@@ -231,18 +231,18 @@ def test_regression_report_404s_without_a_baseline(monkeypatch):
     monkeypatch.setattr("proxy.main.all_tests", lambda: [])
     client = TestClient(app)
     client.post("/v1/findings/sync", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
-    resp = client.get("/v1/regression-report", headers=AUTH_HEADERS)
+    resp = client.get("/v1/regression-report", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "baseline_not_found"
 
 
 def test_baselines_are_listed_newest_first():
     db = _db()
-    record_test_run(db, [_result("a", Status.PASS)])
-    create_baseline(db, "first")
-    create_baseline(db, "second")
+    record_test_run(db, [_result("a", Status.PASS)], project_id=PROJECT_ID)
+    create_baseline(db, "first", project_id=PROJECT_ID)
+    create_baseline(db, "second", project_id=PROJECT_ID)
     db.close()
 
     client = TestClient(app)
-    names = [b["name"] for b in client.get("/v1/baselines", headers=AUTH_HEADERS).json()]
+    names = [b["name"] for b in client.get("/v1/baselines", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS).json()]
     assert "first" in names and "second" in names

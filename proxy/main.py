@@ -34,7 +34,7 @@ from proxy.auth import (
     verify_password,
 )
 from proxy.config import settings
-from proxy.db.models import AgentActionLog, Baseline, CallLog, Finding, Project, User, Workspace
+from proxy.db.models import AgentActionLog, Baseline, CallLog, Finding, Project, TestRunResult, User, Workspace
 from proxy.db.session import get_session, init_db
 from proxy.engine.registry import all_tests
 from proxy.engine.runner import run_suite
@@ -69,7 +69,7 @@ from proxy.middleware.pii_scanner import check_pii
 from proxy.middleware.rate_limiter import check_and_increment
 from proxy.middleware.schema_validator import SchemaValidationFailed, validate_structured_output
 from proxy.provider import MissingCredentialsError, Provider, ProviderError, build_provider, get_provider
-from proxy.reports import build_executive_report, build_technical_report, executive_markdown, technical_markdown
+from proxy.reports import build_executive_report, build_technical_report, executive_markdown, technical_csv, technical_markdown
 from proxy.schemas import (
     ErrorDetail,
     GenerateRequest,
@@ -271,19 +271,23 @@ def sync_security_findings(category: str | None = None, project: Project = Depen
         for f in created:
             record_event(db, event_type=FINDING_OPENED, severity=f.severity, category=f.category,
                          source="findings", model=f.model, summary=f"Finding #{f.id} opened: {f.test_id}.",
-                         details={"finding_id": f.id, "test_id": f.test_id})
-        # NOTE (D-055 scoping gap, tracked not silently ignored): Baseline/regression
-        # are not yet project-scoped in this pass — this looks up the single
-        # newest baseline across ALL projects, same as before project isolation
-        # existed. Retrofitting baselines to project_id is a follow-up.
-        baseline = db.query(Baseline).order_by(Baseline.created_at.desc()).first()
+                         details={"finding_id": f.id, "test_id": f.test_id}, project_id=project.id)
+        # Phase 7 (D-055 follow-up): baselines are project-scoped — only this
+        # project's newest baseline is eligible for regression comparison.
+        baseline = (
+            db.query(Baseline)
+            .filter(Baseline.project_id == project.id)
+            .order_by(Baseline.created_at.desc())
+            .first()
+        )
         if baseline is not None and baseline.run_id != run_id:
             diff = compare_runs(run_snapshot(db, baseline.run_id), run_snapshot(db, run_id))
             for r in diff["regressions"]:
                 record_event(db, event_type=REGRESSION_DETECTED, severity=r["current_severity"],
                              category=r["category"], source="regression",
                              summary=f"{r['test_id']} regressed PASS -> FAIL vs baseline '{baseline.name}'.",
-                             details={"test_id": r["test_id"], "baseline_id": baseline.id, "run_id": run_id})
+                             details={"test_id": r["test_id"], "baseline_id": baseline.id, "run_id": run_id},
+                             project_id=project.id)
         return {
             "results": results,
             "findings_created": [finding_to_dict(f) for f in created],
@@ -304,16 +308,20 @@ def list_agents():
 
 
 @app.post("/v1/agents/{agent_id}/evaluate")
-def evaluate_agent_action(agent_id: str, body: ActionRequestIn):
+def evaluate_agent_action(agent_id: str, body: ActionRequestIn, project_id: int | None = None, user: User = Depends(get_current_user)):
     """Decides ALLOW / DENY / REQUIRE_APPROVAL for one requested tool action
-    and records it. Never executes the tool."""
+    and records it. Never executes the tool. `project_id` is optional
+    (agent profiles are global config, not yet tied 1:1 to a project) — when
+    given, it must belong to the caller and tags the resulting log/event."""
     profile = _agent_profiles().get(canon(agent_id))
     if profile is None:
         raise HTTPException(status_code=404, detail={"code": "agent_not_found", "message": "No such agent profile."})
     db = get_session()
     try:
+        if project_id is not None:
+            owned_project(db, project_id, user)
         decision, row = evaluate_and_record(
-            db, profile, ActionRequest(tool=body.tool, action=body.action, data_source=body.data_source)
+            db, profile, ActionRequest(tool=body.tool, action=body.action, data_source=body.data_source), project_id=project_id
         )
         # D-050: a normal denial is a policy violation; reaching outside the
         # agent's declared tools/data sources is suspicious. ALLOW / pending are not events.
@@ -323,19 +331,24 @@ def evaluate_agent_action(agent_id: str, body: ActionRequestIn):
                          severity="high" if suspicious else "medium", category="agent_policy", source="agent_policy",
                          application=profile.agent_id, model=profile.model,
                          summary=f"{row.tool}.{row.action} denied ({decision.code}).",
-                         details={"action_log_id": row.id, "code": decision.code, "tool": row.tool, "action": row.action})
+                         details={"action_log_id": row.id, "code": decision.code, "tool": row.tool, "action": row.action},
+                         project_id=project_id)
         return action_log_to_dict(row)
     finally:
         db.close()
 
 
 @app.get("/v1/agent-actions")
-def list_agent_actions(agent_id: str | None = None, limit: int = 100):
+def list_agent_actions(agent_id: str | None = None, limit: int = 100, project_id: int | None = None, user: User = Depends(get_current_user)):
     db = get_session()
     try:
+        if project_id is not None:
+            owned_project(db, project_id, user)
         query = db.query(AgentActionLog).order_by(AgentActionLog.created_at.desc())
         if agent_id:
             query = query.filter(AgentActionLog.agent_id == canon(agent_id))
+        if project_id is not None:
+            query = query.filter(AgentActionLog.project_id == project_id)
         return [action_log_to_dict(r) for r in query.limit(limit).all()]
     finally:
         db.close()
@@ -352,7 +365,7 @@ def _resolve(log_id: int, body: ApprovalIn, approve: bool):
             record_event(db, event_type=SUSPICIOUS_TOOL_ACTIVITY, severity="high", category="agent_policy",
                          source="agent_policy", application=row.agent_id,
                          summary=f"Approval bypass attempt on action #{row.id} ({exc.code}).",
-                         details={"action_log_id": row.id, "code": exc.code})
+                         details={"action_log_id": row.id, "code": exc.code}, project_id=row.project_id)
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
     finally:
         db.close()
@@ -369,13 +382,14 @@ def reject_agent_action(log_id: int, body: ApprovalIn):
 
 
 @app.post("/v1/baselines")
-def create_security_baseline(body: BaselineCreate):
-    """Phase 7 (D-046): pins a baseline to a recorded run (the latest one
-    unless `run_id` is given). 409 if there is no run to baseline — never
-    creates an empty baseline that would silently compare against nothing."""
+def create_security_baseline(body: BaselineCreate, project: Project = Depends(require_project)):
+    """Phase 7 (D-046, project-scoped per D-055): pins a baseline to a
+    recorded run in this project (the latest one unless `run_id` is given).
+    409 if there is no run to baseline — never creates an empty baseline
+    that would silently compare against nothing."""
     db = get_session()
     try:
-        baseline = create_baseline(db, body.name, body.run_id)
+        baseline = create_baseline(db, body.name, body.run_id, project_id=project.id)
         if baseline is None:
             raise HTTPException(
                 status_code=409,
@@ -390,33 +404,50 @@ def create_security_baseline(body: BaselineCreate):
 
 
 @app.get("/v1/baselines")
-def list_baselines():
+def list_baselines(project: Project = Depends(require_project)):
     db = get_session()
     try:
-        return [baseline_to_dict(b) for b in db.query(Baseline).order_by(Baseline.created_at.desc()).all()]
+        rows = (
+            db.query(Baseline)
+            .filter(Baseline.project_id == project.id)
+            .order_by(Baseline.created_at.desc())
+            .all()
+        )
+        return [baseline_to_dict(b) for b in rows]
     finally:
         db.close()
 
 
 @app.get("/v1/regression-report")
-def regression_report(baseline_id: int | None = None, run_id: str | None = None):
-    """Compares a run against a baseline. Defaults to the newest baseline vs
-    the newest recorded run. Returns counts *and* full per-test detail — no
-    single 'security score' is produced (spec: a score must not be the sole
-    source of truth)."""
+def regression_report(baseline_id: int | None = None, run_id: str | None = None, project: Project = Depends(require_project)):
+    """Compares a run against a baseline, both scoped to this project (D-055).
+    Defaults to the newest baseline vs the newest recorded run. Returns
+    counts *and* full per-test detail — no single 'security score' is
+    produced (spec: a score must not be the sole source of truth)."""
     db = get_session()
     try:
+        baseline_query = db.query(Baseline).filter(Baseline.project_id == project.id)
         if baseline_id is not None:
-            baseline = db.query(Baseline).filter(Baseline.id == baseline_id).first()
+            baseline = baseline_query.filter(Baseline.id == baseline_id).first()
         else:
-            baseline = db.query(Baseline).order_by(Baseline.created_at.desc()).first()
+            baseline = baseline_query.order_by(Baseline.created_at.desc()).first()
         if baseline is None:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "baseline_not_found", "message": "No baseline exists yet. Create one first."},
             )
 
-        target_run_id = run_id or latest_run_id(db)
+        if run_id is not None:
+            # A caller-supplied run_id must belong to this project too — otherwise
+            # a run_id guessed/leaked from another project could pull its data in.
+            owned_run = (
+                db.query(TestRunResult)
+                .filter(TestRunResult.run_id == run_id, TestRunResult.project_id == project.id)
+                .first()
+            )
+            target_run_id = run_id if owned_run is not None else None
+        else:
+            target_run_id = latest_run_id(db, project_id=project.id)
         if target_run_id is None:
             raise HTTPException(
                 status_code=409,
@@ -438,15 +469,17 @@ def list_events(
     category: str | None = None,
     event_type: str | None = None,
     limit: int = 200,
+    project: Project = Depends(require_project),
 ):
-    """Phase 11 (D-050): security events, filterable by time / severity /
-    application / model / category / event type (comma-separated where plural
-    makes sense). Events are observations — see /v1/findings for vulnerabilities."""
+    """Phase 11 (D-050, project-scoped per D-055): security events, filterable
+    by time / severity / application / model / category / event type
+    (comma-separated where plural makes sense). Events are observations — see
+    /v1/findings for vulnerabilities."""
     db = get_session()
     try:
         rows = query_events(db, since=since, until=until, severity=severity, min_severity=min_severity,
                             application=application, model=model, category=category, event_type=event_type,
-                            limit=min(max(limit, 1), 1000))
+                            limit=min(max(limit, 1), 1000), project_id=project.id)
         return [event_to_dict(e) for e in rows]
     finally:
         db.close()
@@ -469,10 +502,11 @@ def apply_event_retention():
 
 
 @app.get("/v1/reports/executive")
-def get_executive_report(since: datetime | None = None, until: datetime | None = None, format: str = "json"):
+def get_executive_report(since: datetime | None = None, until: datetime | None = None, format: str = "json", project: Project = Depends(require_project)):
+    """Phase 10 (project-scoped per D-055): `format` is json (default) or md."""
     db = get_session()
     try:
-        report = build_executive_report(db, since, until)
+        report = build_executive_report(db, since, until, project_id=project.id)
         if format == "md":
             return PlainTextResponse(executive_markdown(report))
         return report
@@ -481,12 +515,15 @@ def get_executive_report(since: datetime | None = None, until: datetime | None =
 
 
 @app.get("/v1/reports/technical")
-def get_technical_report(since: datetime | None = None, until: datetime | None = None, format: str = "json"):
+def get_technical_report(since: datetime | None = None, until: datetime | None = None, format: str = "json", project: Project = Depends(require_project)):
+    """Phase 10 (project-scoped per D-055): `format` is json (default), md, or csv."""
     db = get_session()
     try:
-        report = build_technical_report(db, since, until)
+        report = build_technical_report(db, since, until, project_id=project.id)
         if format == "md":
             return PlainTextResponse(technical_markdown(report))
+        if format == "csv":
+            return PlainTextResponse(technical_csv(report), media_type="text/csv")
         return report
     finally:
         db.close()
@@ -633,7 +670,7 @@ def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), u
             _log(db, req, empty_usage, guardrails, "input_too_large")
             record_event(db, event_type=REQUEST_BLOCKED, severity="low", category="input_size", source="proxy",
                          application=req.operation, summary=f"Input over {MAX_INPUT_CHARS} chars rejected.",
-                         details={"length": len(inbound_text)})
+                         details={"length": len(inbound_text)}, project_id=req.project_id)
             return JSONResponse(
                 status_code=413,
                 content=GenerateResponse(
@@ -653,14 +690,14 @@ def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), u
             record_event(db, event_type=POLICY_VIOLATION, severity="medium", category="sensitive_data_inbound",
                          source="proxy", application=req.operation,
                          summary=f"Inbound content contained: {', '.join(pii_req.types)}.",
-                         details={"types": pii_req.types})
+                         details={"types": pii_req.types}, project_id=req.project_id)
 
         if injection.flagged:
             _log(db, req, empty_usage, guardrails, "injection_detected")
             record_event(db, event_type=ATTACK_ATTEMPT, severity="high", category="prompt_injection", source="proxy",
                          application=req.operation,
                          summary=f"Blocked; matched: {', '.join(injection.matched_patterns)}.",
-                         details={"matched_patterns": injection.matched_patterns, "blocked": True})
+                         details={"matched_patterns": injection.matched_patterns, "blocked": True}, project_id=req.project_id)
             return JSONResponse(
                 status_code=400,
                 content=GenerateResponse(
@@ -674,7 +711,7 @@ def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), u
         if not check_and_increment(req.session_id):
             _log(db, req, empty_usage, guardrails, "rate_limit_exceeded")
             record_event(db, event_type=REQUEST_BLOCKED, severity="low", category="rate_limit", source="proxy",
-                         application=req.operation, summary="Per-session call limit reached.")
+                         application=req.operation, summary="Per-session call limit reached.", project_id=req.project_id)
             return JSONResponse(
                 status_code=429,
                 content=GenerateResponse(
@@ -726,7 +763,7 @@ def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), u
                          category="sensitive_information_disclosure", source="proxy",
                          application=req.operation, model=llm_resp.model,
                          summary=f"Model output contained: {', '.join(pii_resp.types)}.",
-                         details={"types": pii_resp.types, "provider": llm_resp.provider})
+                         details={"types": pii_resp.types, "provider": llm_resp.provider}, project_id=req.project_id)
         guardrails.pii = PIIResult(
             found=pii_req.found or pii_resp.found,
             redacted=False,

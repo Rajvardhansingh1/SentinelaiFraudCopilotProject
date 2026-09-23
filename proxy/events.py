@@ -49,15 +49,20 @@ def record_event(
     application: str | None = None,
     model: str | None = None,
     details: dict | None = None,
+    project_id: int | None = None,
 ) -> SecurityEvent | None:
     """`summary`/`details` must be metadata (pattern names, types, ids) —
-    callers never pass prompt or response text."""
+    callers never pass prompt or response text. `project_id` is None for
+    events from execution sources outside the project model (e.g. the
+    gateway) — those remain visible only via source="gateway" filtering,
+    never through a project-scoped /v1/events call (D-055)."""
     if not settings.events_enabled:
         return None
     if _RANK.get(severity, 0) < _RANK[settings.events_min_severity]:
         return None
     try:
         event = SecurityEvent(
+            project_id=project_id,
             event_type=event_type,
             severity=severity,
             category=category,
@@ -105,8 +110,11 @@ def query_events(
     category: str | None = None,
     event_type: str | None = None,
     limit: int = 200,
+    project_id: int | None = None,
 ) -> list[SecurityEvent]:
     q = db.query(SecurityEvent)
+    if project_id is not None:
+        q = q.filter(SecurityEvent.project_id == project_id)
     if since:
         q = q.filter(SecurityEvent.created_at >= since)
     if until:
@@ -139,6 +147,7 @@ def purge_expired(db: Session, retention_days: int | None = None) -> int:
 def event_to_dict(e: SecurityEvent) -> dict:
     return {
         "id": e.id,
+        "project_id": e.project_id,
         "event_type": e.event_type,
         "severity": e.severity,
         "category": e.category,

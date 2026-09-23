@@ -64,6 +64,7 @@ def _gen(client, content, session="s1"):
 
 
 def _events(**filters):
+    filters.setdefault("project_id", PROJECT_ID)
     return TestClient(app).get("/v1/events", params=filters, headers=AUTH_HEADERS).json()
 
 
@@ -158,7 +159,7 @@ def test_regression_against_baseline_emits_regression_detected(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
     _sync(client)
-    client.post("/v1/baselines", json={"name": "good"}, headers=AUTH_HEADERS)
+    client.post("/v1/baselines", json={"name": "good"}, params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert _events(event_type="regression_detected") == []
 
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
@@ -179,7 +180,8 @@ def test_no_regression_event_without_a_baseline(monkeypatch):
 
 def _eval(tool, action):
     return TestClient(app).post(
-        "/v1/agents/support-assistant/evaluate", json={"tool": tool, "action": action}, headers=AUTH_HEADERS
+        "/v1/agents/support-assistant/evaluate", json={"tool": tool, "action": action},
+        params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS
     ).json()
 
 
@@ -229,7 +231,7 @@ def test_approving_a_denied_action_is_suspicious():
 def _seed(**overrides):
     db = SessionLocal()
     fields = {"event_type": "attack_attempt", "severity": "high", "category": "prompt_injection",
-              "source": "test", "summary": "s", "application": "app-a", "model": "m1"}
+              "source": "test", "summary": "s", "application": "app-a", "model": "m1", "project_id": PROJECT_ID}
     fields.update(overrides)
     event = record_event(db, **fields)
     db.close()
@@ -251,7 +253,7 @@ def test_filter_by_event_type_severity_category_application_model():
 
 def test_filter_by_time_window():
     db = SessionLocal()
-    old = record_event(db, event_type="attack_attempt", severity="high", category="c", source="t", summary="old")
+    old = record_event(db, event_type="attack_attempt", severity="high", category="c", source="t", summary="old", project_id=PROJECT_ID)
     old.created_at = datetime.now(timezone.utc) - timedelta(days=3)
     db.commit()
     db.close()

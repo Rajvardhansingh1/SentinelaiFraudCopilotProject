@@ -143,7 +143,7 @@ def test_major_changes_reflects_a_real_regression(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.PASS)])
     _sync(client)
-    client.post("/v1/baselines", json={"name": "good"}, headers=AUTH_HEADERS)
+    client.post("/v1/baselines", json={"name": "good"}, params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     monkeypatch.setattr("proxy.main.all_tests", lambda: [_flip_test(Status.FAIL)])
     _sync(client)
 
@@ -239,13 +239,13 @@ def test_report_containing_a_configured_key_in_evidence_is_scrubbed(monkeypatch)
 
 
 def test_executive_endpoint_json():
-    resp = TestClient(app).get("/v1/reports/executive", headers=AUTH_HEADERS)
+    resp = TestClient(app).get("/v1/reports/executive", params={"project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["report_type"] == "executive"
 
 
 def test_technical_endpoint_markdown_is_plain_text():
-    resp = TestClient(app).get("/v1/reports/technical", params={"format": "md"}, headers=AUTH_HEADERS)
+    resp = TestClient(app).get("/v1/reports/technical", params={"format": "md", "project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")
     assert resp.text.startswith("# SentinelAI Security Report — Technical")
@@ -263,5 +263,5 @@ def test_executive_endpoint_markdown_no_secrets(monkeypatch):
         )],
     )
     _sync()
-    resp = TestClient(app).get("/v1/reports/executive", params={"format": "md"}, headers=AUTH_HEADERS)
+    resp = TestClient(app).get("/v1/reports/executive", params={"format": "md", "project_id": PROJECT_ID}, headers=AUTH_HEADERS)
     assert key not in resp.text

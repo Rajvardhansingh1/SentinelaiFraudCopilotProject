@@ -97,25 +97,29 @@ def compare_runs(baseline: list[dict], current: list[dict]) -> dict:
     }
 
 
-def findings_delta(db: Session, since: datetime) -> dict:
+def findings_delta(db: Session, since: datetime, project_id: int | None = None) -> dict:
     """Findings opened or resolved since the baseline was taken. Read-only —
     resolving a finding never deletes it (D-044), so both lists stay truthful."""
-    new_findings = db.query(Finding).filter(Finding.created_at > since).all()
-    resolved_findings = (
-        db.query(Finding).filter(Finding.status == "RESOLVED", Finding.updated_at > since).all()
-    )
+    new_q = db.query(Finding).filter(Finding.created_at > since)
+    resolved_q = db.query(Finding).filter(Finding.status == "RESOLVED", Finding.updated_at > since)
+    if project_id is not None:
+        new_q = new_q.filter(Finding.project_id == project_id)
+        resolved_q = resolved_q.filter(Finding.project_id == project_id)
     return {
         "new_findings": [
-            {"id": f.id, "test_id": f.test_id, "severity": f.severity, "title": f.title} for f in new_findings
+            {"id": f.id, "test_id": f.test_id, "severity": f.severity, "title": f.title} for f in new_q.all()
         ],
         "resolved_findings": [
-            {"id": f.id, "test_id": f.test_id, "severity": f.severity, "title": f.title} for f in resolved_findings
+            {"id": f.id, "test_id": f.test_id, "severity": f.severity, "title": f.title} for f in resolved_q.all()
         ],
     }
 
 
-def latest_run_id(db: Session) -> str | None:
-    row = db.query(TestRunResult).order_by(TestRunResult.executed_at.desc()).first()
+def latest_run_id(db: Session, project_id: int | None = None) -> str | None:
+    query = db.query(TestRunResult)
+    if project_id is not None:
+        query = query.filter(TestRunResult.project_id == project_id)
+    row = query.order_by(TestRunResult.executed_at.desc()).first()
     return row.run_id if row else None
 
 
@@ -124,16 +128,20 @@ def run_snapshot(db: Session, run_id: str) -> list[dict]:
     return [row_to_snapshot(r) for r in rows]
 
 
-def create_baseline(db: Session, name: str, run_id: str | None = None) -> Baseline | None:
-    """Pins a baseline to a run. Defaults to the most recent recorded run.
-    Returns None if there is no run to baseline (caller turns that into a
-    clear error — never a silently empty baseline)."""
-    target_run_id = run_id or latest_run_id(db)
+def create_baseline(db: Session, name: str, run_id: str | None = None, project_id: int | None = None) -> Baseline | None:
+    """Pins a baseline to a run. Defaults to the most recent recorded run
+    *in this project* (Phase 2/7, D-055). Returns None if there is no run to
+    baseline (caller turns that into a clear error — never a silently empty
+    baseline)."""
+    target_run_id = run_id or latest_run_id(db, project_id=project_id)
     if target_run_id is None:
         return None
-    if not db.query(TestRunResult).filter(TestRunResult.run_id == target_run_id).first():
+    run_query = db.query(TestRunResult).filter(TestRunResult.run_id == target_run_id)
+    if project_id is not None:
+        run_query = run_query.filter(TestRunResult.project_id == project_id)
+    if not run_query.first():
         return None
-    baseline = Baseline(name=name, run_id=target_run_id)
+    baseline = Baseline(name=name, run_id=target_run_id, project_id=project_id)
     db.add(baseline)
     db.commit()
     db.refresh(baseline)
@@ -141,7 +149,7 @@ def create_baseline(db: Session, name: str, run_id: str | None = None) -> Baseli
 
 
 def baseline_to_dict(b: Baseline) -> dict:
-    return {"id": b.id, "name": b.name, "run_id": b.run_id, "created_at": b.created_at}
+    return {"id": b.id, "name": b.name, "run_id": b.run_id, "project_id": b.project_id, "created_at": b.created_at}
 
 
 def build_regression_report(db: Session, baseline: Baseline, run_id: str) -> dict:
@@ -150,5 +158,5 @@ def build_regression_report(db: Session, baseline: Baseline, run_id: str) -> dic
     report = compare_runs(baseline_rows, current_rows)
     report["baseline"] = baseline_to_dict(baseline)
     report["current_run_id"] = run_id
-    report["findings"] = findings_delta(db, baseline.created_at)
+    report["findings"] = findings_delta(db, baseline.created_at, project_id=baseline.project_id)
     return report
