@@ -109,3 +109,12 @@ and `gateway/main.py` is open to any caller that can reach the port.
 which *browser origins* may call the API — it is not authorization, it does
 not restrict *who* behind an allowed origin can act, and it does nothing
 for server-to-server/API/CI callers.
+
+## Project / Workspace Model
+
+**None exists.** SentinelAI is a single global instance: one proxy, one
+database, no `User`/`Workspace`/`Project` table or foreign key anywhere in
+`proxy/db/models.py`. The closest existing concept is `GenerateRequest.operation`
+(`extract|policy_check|report|playground`), a fixed label describing the
+*kind* of call, not an isolated tenant/project. All findings, test runs,
+events, and baselines are global — every caller sees every row.
