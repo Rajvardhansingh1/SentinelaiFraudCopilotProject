@@ -813,7 +813,10 @@ def generate(req: GenerateRequest, provider: Provider = Depends(get_provider), u
                 ).model_dump(),
             )
 
-        if not check_and_increment(req.session_id):
+        # Rate limit is keyed on the authenticated user (server-controlled), not the
+        # client-supplied session_id — session_id is still used for logging/scoping
+        # (CallLog, event summaries) but a client rotating it must not reset quota.
+        if not check_and_increment(f"user:{user.id}"):
             _log(db, req, empty_usage, guardrails, "rate_limit_exceeded")
             record_event(db, event_type=REQUEST_BLOCKED, severity="low", category="rate_limit", source="proxy",
                          application=req.operation, summary="Per-session call limit reached.", project_id=req.project_id)
