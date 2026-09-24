@@ -7,6 +7,7 @@ import { GuardrailCatchesCard } from "@/components/dashboard/guardrail-catches-c
 import { HallucinationChart } from "@/components/dashboard/hallucination-chart";
 import { MetricsRow } from "@/components/dashboard/metrics-row";
 import { TrafficChart } from "@/components/dashboard/traffic-chart";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getCalls } from "@/lib/api";
 import type { CallLogRow } from "@/lib/types";
 
@@ -38,20 +39,37 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      <MetricsRow calls={calls} />
+      {loading && calls.length === 0 ? (
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+          <Skeleton className="h-48 w-full" />
+        </div>
+      ) : (
+        <>
+          <MetricsRow calls={calls} />
 
-      {!loading && calls.length === 0 && (
-        <p className="text-text-primary/60">No calls recorded yet. Use the playground or review pages, then refresh.</p>
+          {!loading && calls.length === 0 && (
+            <p className="text-text-primary/60">No calls recorded yet. Use the playground or review pages, then refresh.</p>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TrafficChart calls={calls} />
+            <GuardrailCatchesCard calls={calls} />
+          </div>
+
+          <HallucinationChart calls={calls} />
+
+          <CostLatencyCards calls={calls} />
+        </>
       )}
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TrafficChart calls={calls} />
-        <GuardrailCatchesCard calls={calls} />
-      </div>
-
-      <HallucinationChart calls={calls} />
-
-      <CostLatencyCards calls={calls} />
     </div>
   );
 }
