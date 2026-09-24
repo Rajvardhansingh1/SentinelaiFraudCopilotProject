@@ -2,6 +2,45 @@
 
 Chronological development record. Append entries; do not rewrite history except to correct factual errors.
 
+## 2026-09-24 — V3 frontend: landing page, About, Install, skeleton loaders, typography
+
+**Phase:** SentinelAI frontend polish (spec: `docs/superpowers/specs/2026-09-24-v3-frontend-design.md`, plan: `docs/superpowers/plans/2026-09-24-v3-frontend.md`, both gitignored `*.md`)
+**Status:** Complete, 18-task plan executed task-by-task on `main`, 16 commits (Task 3 skipped, see below).
+
+### Completed
+- Task 1: `Skeleton` primitive (`web/components/ui/skeleton.tsx`).
+- Task 2: IBM Plex Sans/Mono site-wide via `next/font/google` (`web/app/layout.tsx`, `web/tailwind.config.ts`).
+- Task 3: **skipped, not a blind delete.** Plan assumed `lucide-react` had zero imports; a grep at execution time found `sidebar-nav.tsx` now imports `Menu`/`X` from it (added by a later mobile-sidebar-drawer bug fix, after this plan was written). Removing it would have broken the mobile hamburger menu, so the dependency stays. Documented here per the plan's own "STOP, escalate" instruction for this exact case.
+- Task 4: `PublicHeader` component.
+- Task 5: `NetworkHero3D` (three.js + `@react-three/fiber`, pinned to `^8` instead of latest `^9` — v9 requires React 19, this app is on React 18.3.1).
+- Task 6: auth gating for `/`, `/about`, `/install` (`auth-guard.tsx`, `app-shell.tsx`); logged-in users hitting `/` redirect to `/playground`.
+- Task 7: real landing page at `/` (hero, 3D canvas, walkthrough, CTA), replacing the old `redirect("/playground")`.
+- Task 8: `/about` page.
+- Task 9: `/install` page — terminal commands verified verbatim against README.md's "Running it" section.
+- Tasks 10-17: skeleton-loader retrofit into 8 existing authenticated pages (dashboard, findings list, finding detail, remediation, regression, monitoring, security tests, agents), replacing bare "Loading..." text/blank gaps.
+- Task 18: new Playwright spec `web/tests/e2e/landing-and-public-pages.spec.ts` (4 tests), full existing e2e suite re-verified.
+
+### Deviations from the plan's literal snippets (adapted, not blindly pasted)
+- **Removed em dashes from all new page copy** (landing/about/install) — the plan's own snippet used them despite the spec explicitly forbidding em dashes. Caught before commit.
+- **Test infra gaps discovered and fixed**, since no prior component-render test existed in this repo (all prior vitest tests were plain `.test.ts`, no JSX):
+  - `vitest.config.ts` had no JSX transform configured — added `esbuild: { jsx: "automatic" }`.
+  - `@testing-library/jest-dom` was never installed — added as a devDependency plus `vitest.setup.ts` wiring it in via `setupFiles`.
+- Two of the plan's own test snippets (`app/page.test.tsx`, `app/about/page.test.tsx`) used `getByText` on strings ("proxy", "Fraud Copilot") that legitimately appear in more than one element on the real rendered page; changed to `getAllByText(...).length > 0`.
+- `app-shell.tsx` had drifted from the plan's snapshot (an earlier mobile-sidebar fix added `cn()`-based conditional top padding); adapted the edit to keep that behavior while adding the new public paths, instead of overwriting it with the plan's stale snippet.
+- **Real pre-existing bug found and fixed, not part of the plan's scope but blocking Task 18's verification**: `web/next.config.js`'s CSP `script-src` lacked `'unsafe-eval'`, which `next dev`'s default webpack devtool (`eval-source-map`) needs for HMR/hydration. This silently broke **all** client-side hydration (every page, not just new ones) when testing against `npm run dev` — the CSP was added in a later session (per `state.md`'s "Live black-box bug fixes" entry) than the last time Playwright ran against the dev server, so this had never been exercised until this session's Task 18 run. Fixed by only adding `'unsafe-eval'` when `NODE_ENV !== "production"` — the production build doesn't need it.
+
+### Test results (final verification pass)
+- Backend: `.venv\Scripts\python -m pytest -q` → 375 passed, 2 skipped (baseline before this session: 374 passed/3 skipped; the +1 pass/-1 skip is a proxy-dependent test flipping because a live proxy happened to be running during this run for e2e testing, not a backend code change — this plan touched no backend code).
+- `web`: `npx tsc --noEmit` → clean.
+- `web`: `npx vitest run` → 8 test files, 23 tests, all passed (5 new: skeleton, public-header, landing page, about page, install page).
+- `web`: `npx playwright test` (live proxy on :8000 + `npm run dev` on :3000, both started/stopped manually this session) → 8 passed, 1 skipped (paused Fraud Copilot review, expected), 0 failed. One flaky failure (`playground.spec.ts`'s WeaknessCoach test, live-LLM-dependent) seen once under 4-worker parallelism, reproduced as a pass when re-run alone and in the final full-suite run — not a regression from this plan.
+
+### Files changed
+`web/components/ui/skeleton.{tsx,test.tsx}`, `web/components/layout/{public-header.tsx,public-header.test.tsx,auth-guard.tsx,app-shell.tsx}`, `web/components/landing/network-hero-3d.tsx`, `web/app/{layout.tsx,page.tsx,page.test.tsx}`, `web/app/about/{page.tsx,page.test.tsx}`, `web/app/install/{page.tsx,page.test.tsx}`, `web/app/{dashboard,findings,findings/[id],remediation,regression,monitoring,security,agents}/page.tsx`, `web/tests/e2e/landing-and-public-pages.spec.ts`, `web/tailwind.config.ts`, `web/vitest.config.ts`, `web/vitest.setup.ts` (new), `web/next.config.js`, `web/package.json`, `web/package-lock.json`.
+
+### Next step
+Nothing left unbuilt from this plan (Task 3's lucide-react removal is genuinely blocked by real usage now, not a gap). Real deployment remains the only open item, per `state.md`'s existing notes — unrelated to this session.
+
 ## 2026-09-18 — Project initialization
 
 **Phase:** 0 — Project Foundation  
