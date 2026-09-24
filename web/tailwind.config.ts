@@ -17,6 +17,10 @@ const config: Config = {
         md: "0.5rem",
         sm: "0.375rem",
       },
+      fontFamily: {
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        mono: ["var(--font-mono)", "monospace"],
+      },
     },
   },
   plugins: [],
