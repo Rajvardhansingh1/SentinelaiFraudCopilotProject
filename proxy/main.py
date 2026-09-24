@@ -116,14 +116,6 @@ try:
 finally:
     _startup_db.close()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_origins_list,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
-)
-
 # Phase 2 (D-055): every route requires a valid bearer token except this
 # allowlist. A single choke point, not a per-route opt-in — a new endpoint
 # is authenticated by default, not accidentally left open.
@@ -149,6 +141,25 @@ async def require_auth(request: Request, call_next):
     elif scheme != "apikey":
         return JSONResponse(status_code=401, content={"detail": {"code": "not_authenticated", "message": "Missing bearer token or API key."}})
     return await call_next(request)
+
+
+# CORS must be registered AFTER `require_auth` above, not before. FastAPI's
+# `@app.middleware("http")` decorator inserts into the middleware stack at
+# position 0 (Starlette's `add_middleware` does `insert(0, ...)`), so a
+# middleware registered after CORSMiddleware ends up wrapping *outside* it.
+# `require_auth` returns a plain JSONResponse directly (401) without calling
+# call_next in several branches; when it was outside CORSMiddleware those
+# responses bypassed CORS entirely and browsers blocked them client-side with
+# a CORS error instead of surfacing the real 401/400. Registering CORS last
+# makes it the outermost layer so every response — including require_auth's
+# short-circuited ones and any exception-handler output — passes through it.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
 
 @app.exception_handler(Exception)
