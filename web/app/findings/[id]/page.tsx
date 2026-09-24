@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FindingStatusBadge } from "@/components/findings/finding-status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getFinding, updateFindingStatus } from "@/lib/api";
 import type { Finding, FindingStatusValue } from "@/lib/types";
 
@@ -39,7 +40,15 @@ export default function FindingDetailPage() {
     setUpdating(false);
   }
 
-  if (loading) return <p className="text-text-primary/60">Loading...</p>;
+  if (loading) {
+    return (
+      <div className="max-w-3xl space-y-6">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
 
   if (!finding) {
     return (
