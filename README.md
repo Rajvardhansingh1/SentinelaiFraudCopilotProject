@@ -68,7 +68,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` — redirects to the Red-Team Playground. Sidebar nav covers Playground / Eval Dashboard. `/review` (Receipt Review) still exists on disk but shows a paused notice and isn't linked from the sidebar.
+Open `http://localhost:3000` — redirects to `/playground`, which (per Phase 2's auth work) redirects to `/login` if you're not signed in yet. Sign up/log in, then you land on the Red-Team Playground. Sidebar nav covers Playground / Eval Dashboard. `/review` (Receipt Review) still exists on disk but shows a paused notice and isn't linked from the sidebar.
 
 `web/.env.local` (copy from `.env.local.example`) points the frontend at the proxy:
 ```
