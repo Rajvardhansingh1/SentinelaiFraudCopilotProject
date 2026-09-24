@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/security/status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { createBaseline, getRegressionReport, listBaselines } from "@/lib/api";
 import type { Baseline, RegressionEntry, RegressionReport } from "@/lib/types";
 
@@ -115,7 +116,17 @@ export default function RegressionPage() {
         </p>
       )}
 
-      {loading && <p className="text-text-primary/60">Loading regression report...</p>}
+      {loading && (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+          <Skeleton className="h-40 w-full" />
+        </div>
+      )}
 
       {!loading && errorState?.code === "baseline_not_found" && (
         <div className="rounded-md border border-bg-surface bg-bg-surface/40 px-4 py-3 text-sm text-text-primary/60">
