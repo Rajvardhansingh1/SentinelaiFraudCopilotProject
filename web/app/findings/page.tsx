@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FindingStatusBadge } from "@/components/findings/finding-status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { listFindings, syncFindings } from "@/lib/api";
 import type { Finding, FindingStatusValue } from "@/lib/types";
 
@@ -20,7 +21,7 @@ const SEVERITY_VARIANT: Record<string, "danger" | "warning" | "default" | "muted
 export default function FindingsPage() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [filter, setFilter] = useState<FindingStatusValue | "ALL">("ALL");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
   async function load(status: FindingStatusValue | "ALL") {
@@ -72,44 +73,54 @@ export default function FindingsPage() {
         ))}
       </div>
 
+      {loading && (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      )}
+
       {!loading && findings.length === 0 && (
         <p className="text-text-primary/60">
           No findings{filter !== "ALL" ? ` with status ${filter}` : ""}. Run tests & sync to check for new ones.
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-md border border-bg-surface">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-bg-surface/60 text-text-primary/60">
-            <tr>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Category</th>
-              <th className="px-3 py-2">Title</th>
-              <th className="px-3 py-2">Severity</th>
-              <th className="px-3 py-2">Opened</th>
-            </tr>
-          </thead>
-          <tbody>
-            {findings.map((f) => (
-              <tr key={f.id} className="border-t border-bg-surface/60">
-                <td className="px-3 py-2">
-                  <FindingStatusBadge status={f.status} />
-                </td>
-                <td className="px-3 py-2 text-text-primary/80">{f.category}</td>
-                <td className="px-3 py-2">
-                  <Link href={`/findings/${f.id}`} className="text-accent-teal underline underline-offset-2">
-                    {f.title}
-                  </Link>
-                </td>
-                <td className="px-3 py-2">
-                  <Badge variant={SEVERITY_VARIANT[f.severity] ?? "muted"}>{f.severity}</Badge>
-                </td>
-                <td className="px-3 py-2 text-text-primary/60">{new Date(f.created_at).toLocaleString()}</td>
+      {!loading && findings.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-bg-surface">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-bg-surface/60 text-text-primary/60">
+              <tr>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2">Title</th>
+                <th className="px-3 py-2">Severity</th>
+                <th className="px-3 py-2">Opened</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {findings.map((f) => (
+                <tr key={f.id} className="border-t border-bg-surface/60">
+                  <td className="px-3 py-2">
+                    <FindingStatusBadge status={f.status} />
+                  </td>
+                  <td className="px-3 py-2 text-text-primary/80">{f.category}</td>
+                  <td className="px-3 py-2">
+                    <Link href={`/findings/${f.id}`} className="text-accent-teal underline underline-offset-2">
+                      {f.title}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge variant={SEVERITY_VARIANT[f.severity] ?? "muted"}>{f.severity}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-text-primary/60">{new Date(f.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
