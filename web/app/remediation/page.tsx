@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FindingStatusBadge } from "@/components/findings/finding-status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { listFindings, syncFindings } from "@/lib/api";
 import type { Finding } from "@/lib/types";
 
@@ -79,7 +80,13 @@ export default function RemediationCenterPage() {
         </Button>
       </div>
 
-      {loading && <p className="text-text-primary/60">Loading...</p>}
+      {loading && (
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      )}
 
       {!loading && openFindings.length === 0 && (
         <div className="rounded-md border border-bg-surface bg-bg-surface/40 px-4 py-3 text-sm text-text-primary/60">
