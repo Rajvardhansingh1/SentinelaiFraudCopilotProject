@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { evaluateAgentAction, listAgentActions, listAgents, resolveAgentAction } from "@/lib/api";
 import type { AgentActionLog, AgentDecision, AgentProfile } from "@/lib/types";
 
@@ -66,7 +67,17 @@ export default function AgentSecurityPage() {
     loadActions(agentId);
   }
 
-  if (loading) return <p className="text-text-primary/60">Loading agents...</p>;
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
