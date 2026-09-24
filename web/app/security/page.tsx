@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/security/status-badge";
 import { DashboardSummary } from "@/components/security/dashboard-summary";
+import { Skeleton } from "@/components/ui/skeleton";
 import { runSecurityTests } from "@/lib/api";
 import type { SecurityTestResult } from "@/lib/types";
 
@@ -17,7 +18,7 @@ const SEVERITY_VARIANT: Record<string, "danger" | "warning" | "default" | "muted
 
 export default function SecurityTestsPage() {
   const [results, setResults] = useState<SecurityTestResult[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [ranOnce, setRanOnce] = useState(false);
 
   async function run() {
@@ -60,6 +61,14 @@ export default function SecurityTestsPage() {
           {loading ? "Running..." : "Run all"}
         </Button>
       </div>
+
+      {loading && (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      )}
 
       {ranOnce && !loading && results.length === 0 && (
         <p className="text-text-primary/60">No tests returned — is the SentinelAI proxy running?</p>
