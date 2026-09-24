@@ -953,6 +953,43 @@ Run `REACT_FRONTEND_PLAN.md` §8's formal parity checklist. Decide when to retir
 ### Next step
 - None from this pass. Remaining open work is still what `state.md` already lists: real deployment (Render/Vercel), or new user-directed scope. Whoever deploys the gateway for real needs to generate and set `GATEWAY_API_KEY` on Render (same pattern as `JWT_SECRET`).
 
+## 2026-09-24 — Live black-box bug fixes: CORS, security headers, favicon, mobile layout
+
+**Phase:** Post-Phase-13 hardening (bug fixes found by a live black-box test of the deployed app, not a spec_V3.md phase)
+**Spec:** N/A — reactive fixes to real defects found in the deployed instance
+**Status:** Done
+
+### Completed
+- **CORS (critical):** root cause was `require_auth` (the global `@app.middleware("http")` in `proxy/main.py`) short-circuiting with a plain `JSONResponse` on 401s without calling `call_next`. Starlette's `add_middleware` inserts at position 0, so a middleware registered *after* `CORSMiddleware` wraps *outside* it — `require_auth` was outside `CORSMiddleware`, so its short-circuited 401 responses bypassed CORS entirely and browsers blocked them client-side with a CORS error instead of surfacing the real error. Fixed by registering `CORSMiddleware` after `require_auth` so it becomes the outermost layer and sees every response. Verified live with uvicorn + curl (401 now carries `access-control-allow-origin`).
+- **Security headers (low):** added `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and a `Content-Security-Policy` via `web/next.config.js` `headers()`. No external font allowance needed (app uses a system font stack, no `next/font/google`). `connect-src` scoped to self + Render's `*.onrender.com` + localhost dev ports.
+- **Favicon (cosmetic):** added `web/app/icon.svg` (Next.js App Router static icon convention) — simple accent-teal "S" square, no invented logo. A dynamic `app/icon.tsx` via `next/og`'s `ImageResponse` was tried first but broke `next build` on this Windows environment (a font-loading path bug inside `@vercel/og`); switched to the static SVG convention which sidesteps that dependency.
+- **Mobile layout (medium):** `sidebar-nav.tsx`'s static `w-56` sidebar ate ~57% of a 390px viewport with no responsive behavior. Now a fixed off-canvas drawer below `lg` (hamburger-toggled, closes on backdrop click or link nav), unchanged static sidebar at `lg`+. `app-shell.tsx`'s main content got `min-w-0` (prevents flex-item overflow) and mobile-only top padding to clear the fixed hamburger button.
+
+### Files changed
+- `proxy/main.py` (CORS middleware ordering fix)
+- `tests/test_cors.py` (new — regression test: CORS headers present on 200/400/401/preflight OPTIONS)
+- `web/next.config.js` (security headers + CSP)
+- `web/app/icon.svg` (new)
+- `web/components/layout/sidebar-nav.tsx`, `web/components/layout/app-shell.tsx` (mobile drawer)
+
+### Tests / validation
+- Backend: `pytest tests -q` — 370 passed, 3 skipped (was 366/3 before this session; +4 from `test_cors.py`), 0 failed, 0 regressions.
+- Frontend: `npx tsc --noEmit` clean; `npx vitest run` — 18 passed; `npm run build` succeeds (19 routes); `npm start` + curl confirmed headers/CSP present and `/icon.svg` serves 200; headless Playwright pass at 390×844 against a real signed-up session confirmed no horizontal scroll and the drawer opens/closes correctly (off-canvas at x=-224, slides to x=0 on toggle).
+- Live-verified the CORS fix against a real local uvicorn instance with curl, not just TestClient.
+
+### Problems / blockers
+- None of the 4 reported bugs were left unfixed. The CORS root cause required empirical reproduction (TestClient) rather than guessing — the report's exact symptom (400 injection-detected response missing CORS) did not reproduce locally with a valid auth token, but the same *class* of bug (a custom middleware short-circuiting past `CORSMiddleware`) reproduced clearly on the 401 unauthenticated path, which is the same code path (`require_auth`) and the same architectural defect; the fix (reordering `CORSMiddleware` registration) makes CORS the outermost layer for every response regardless of which branch produces it.
+- The CSP's `connect-src` allows `https://*.onrender.com` as a best guess for the Render proxy origin, since the actual production Render service URL isn't recorded anywhere in the repo/state and this session has no deploy/dashboard access to confirm it. Narrow this to the exact proxy hostname once it's known.
+- Per task constraints, did not touch the Render memory-limit/502 issue — out of scope, infra-sizing decision for the user.
+
+### Decisions created/updated
+- None — these are narrow bug fixes within existing architecture, no durable design decisions changed.
+
+### Next step
+- User should review and push these 4 commits (CORS fix, security headers, favicon, mobile layout) after their own verification.
+- Once the real Render proxy hostname is known, narrow `connect-src` in `web/next.config.js` from `https://*.onrender.com` to the exact origin.
+- Real deployment (Supabase DB password, Render env vars, Vercel deploy) remains the only genuinely open work per state.md — unchanged by this session.
+
 ### YYYY-MM-DD — Short title
 
 **Phase:**  
