@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getEventsConfig, listEvents } from "@/lib/api";
 import type { EventFilters, EventsConfig, SecurityEvent } from "@/lib/types";
 
@@ -110,6 +111,14 @@ export default function MonitoringPage() {
       {error && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
           Could not load events: {error}
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
         </div>
       )}
 
