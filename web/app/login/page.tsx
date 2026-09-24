@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,20 @@ import { useAuth } from "@/lib/auth-context";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, user, loading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Bug fix: an already-authenticated user landing here via back-button (browser
+  // history, not a fresh unauthenticated visit) would otherwise dead-end on the
+  // bare login form instead of being sent on to the app.
+  useEffect(() => {
+    if (!loading && user) router.replace("/playground");
+  }, [loading, user, router]);
+
+  if (!loading && user) return null;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

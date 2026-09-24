@@ -10,11 +10,12 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 import pytest
 from fastapi.testclient import TestClient
 
-from gateway.main import app, get_policy, get_router
+from gateway.main import _EFFECTIVE_GATEWAY_KEY, app, get_policy, get_router
 from gateway.pipeline import GatewayPolicy
 from proxy.provider import LLMResponse, ProviderError
 
 SECRET = "sk-ABCDEFGHIJKLMNOPQRST"
+_AUTH_HEADERS = {"Authorization": f"Bearer {_EFFECTIVE_GATEWAY_KEY}"}
 
 
 class RecordingProvider:
@@ -50,7 +51,9 @@ def _clear_overrides():
 
 def _chat(client, content, route=None, system=None):
     msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
-    return client.post("/v1/gateway/chat", json={"messages": msgs, "route": route, "application": "test-app"})
+    return client.post(
+        "/v1/gateway/chat", json={"messages": msgs, "route": route, "application": "test-app"}, headers=_AUTH_HEADERS
+    )
 
 
 def _audit_events(caplog):
@@ -213,6 +216,32 @@ def test_provider_error_details_never_reach_logs(caplog):
     client, _ = _client(RecordingProvider(fail=True))
     _chat(client, "hi")
     assert SECRET not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+# --- authentication ---
+
+
+def test_chat_requires_gateway_credential():
+    client, _ = _client()
+    msgs = [{"role": "user", "content": "hi"}]
+    resp = client.post("/v1/gateway/chat", json={"messages": msgs, "route": None, "application": "test-app"})
+    assert resp.status_code == 401
+
+
+def test_chat_rejects_wrong_gateway_credential():
+    client, _ = _client()
+    msgs = [{"role": "user", "content": "hi"}]
+    resp = client.post(
+        "/v1/gateway/chat",
+        json={"messages": msgs, "route": None, "application": "test-app"},
+        headers={"Authorization": "Bearer wrong-key"},
+    )
+    assert resp.status_code == 401
+
+
+def test_health_needs_no_credential():
+    client, _ = _client()
+    assert client.get("/health").status_code == 200
 
 
 # --- decoupling / statelessness ---

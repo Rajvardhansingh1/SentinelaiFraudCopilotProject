@@ -919,6 +919,40 @@ Run `REACT_FRONTEND_PLAN.md` §8's formal parity checklist. Decide when to retir
 ### Next step
 - `phase_dev_upgrade.md` has no further phases. Remaining work is open-ended: real deployment, or new user-directed scope.
 
+## 2026-09-24 — Follow-up bug fixes (rate-limit bypass, gateway auth, doc/UX polish)
+
+**Phase:** Post-completion hardening (spec_V3.md is fully DONE; these are real bugs found by a live testing subagent in this session, dispatched separately from the CORS/security-headers/favicon/mobile-sidebar fixes already in progress in another worktree)
+**Spec:** N/A — bug fixes, no new requirements
+**Status:** Done
+
+### Completed
+- **HIGH — rate-limit bypass (proxy/main.py):** `/v1/generate`'s per-session rate limiter keyed off client-supplied `session_id`, so rotating it per request bypassed the limit entirely. Now keys on the authenticated user (`user.id` from JWT auth, server-controlled); `session_id` is unchanged for logging/CallLog/event scoping. Added `test_rate_limit_survives_session_id_rotation` to `tests/test_proxy.py`.
+- **HIGH — gateway had zero authentication (gateway/main.py):** Investigated the gateway's trust model before fixing — it's a stateless, server-to-server service (`Application -> Gateway -> Model`, no User/Project/JWT model of its own, `phase_dev_upgrade.md` Phase 10), a genuinely different shape than the proxy's per-user JWT auth. Added a shared-secret `GATEWAY_API_KEY`, checked via `Authorization: Bearer <key>` in a new gateway-local middleware, with the same "hard stop in production if unset" pattern as `proxy/auth.py`'s `JWT_SECRET` check. `/health` stays public. Added `GATEWAY_API_KEY` to `deploy/render.yaml` (`sync: false`) and 3 new auth tests to `tests/test_gateway_phase10.py`.
+- **LOW — README stale redirect claim:** `README.md` said `localhost:3000` redirects straight to the Red-Team Playground; since Phase 2's auth work it redirects to `/login` when logged out (`/` → `/playground` → `AuthGuard` → `/login`). Text corrected to describe current behavior only (not the in-progress landing-page work happening elsewhere in this session).
+- **LOW — `/regression` page logged console errors on a fresh project:** `GET /v1/regression-report` 404s (`baseline_not_found`) when no baseline exists yet — an expected, already-handled state (friendly message already shown). The page fired that fetch in parallel with `listBaselines()` on mount instead of checking baselines first, so a fresh project always hit the 404. Now baselines load first and the report is only fetched once one exists; user-visible message unchanged.
+- **LOW — back-button could dead-end an authenticated user on `/login`:** `AuthGuard` only ever redirected unauthenticated users away from protected pages, never redirected an authenticated user away from `/login`. Added a redirect-to-`/playground` effect in `web/app/login/page.tsx` when `auth-context` already has a `user`.
+
+### Files changed
+- `proxy/main.py`, `tests/test_proxy.py`
+- `gateway/main.py`, `proxy/config.py`, `deploy/render.yaml`, `tests/test_gateway_phase10.py`
+- `README.md`
+- `web/app/regression/page.tsx`
+- `web/app/login/page.tsx`
+
+### Tests / validation
+- Python: 370 passed, 3 skipped (baseline was 367/2 — the +1 skip is `test_eval_suite_smoke.py`/`test_deployment_smoke.py`, all pre-existing "no live deployment reachable" skips, unrelated to this session's changes; +3 passed are new tests in `test_proxy.py`/`test_gateway_phase10.py`; net: zero regressions).
+- Web: `npx tsc --noEmit` clean, `npx vitest run` 18/18 passed (unchanged from baseline).
+- Did not touch CORS-on-error, security headers, favicon, or mobile sidebar CSS — those are in progress in a different worktree per this session's dispatch.
+
+### Problems / blockers
+- None. All 5 reported bugs fixed and verified.
+
+### Decisions created/updated
+- None durable/architectural beyond what's captured above (gateway auth uses a shared-secret key, not JWT, because its trust model is genuinely different from the proxy's — documented inline in `gateway/main.py`, not recorded separately in `decision.md` since it doesn't change any existing accepted decision).
+
+### Next step
+- None from this pass. Remaining open work is still what `state.md` already lists: real deployment (Render/Vercel), or new user-directed scope. Whoever deploys the gateway for real needs to generate and set `GATEWAY_API_KEY` on Render (same pattern as `JWT_SECRET`).
+
 ### YYYY-MM-DD — Short title
 
 **Phase:**  

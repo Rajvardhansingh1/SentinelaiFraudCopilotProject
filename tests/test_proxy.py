@@ -83,6 +83,24 @@ def test_generate_enforces_rate_limit(monkeypatch):
     assert blocked.json()["error"]["code"] == "rate_limit_exceeded"
 
 
+def test_rate_limit_survives_session_id_rotation(monkeypatch):
+    """Bug fix: rate limiting must key off the authenticated user, not the
+    client-supplied session_id — a client rotating session_id per request
+    must not reset its quota."""
+    monkeypatch.setattr("proxy.config.settings.rate_limit_per_session", 1)
+    client = _client()
+    ok = client.post(
+        "/v1/generate", json=_req(session_id="sess-a", project_id=client.project_id), headers=client.auth_headers
+    )
+    assert ok.status_code == 200
+    # Same user, brand-new session_id — should still be blocked.
+    blocked = client.post(
+        "/v1/generate", json=_req(session_id="sess-b", project_id=client.project_id), headers=client.auth_headers
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "rate_limit_exceeded"
+
+
 def test_generate_validates_structured_schema():
     fake = FakeProvider(text='{"vendor": "Acme", "date": "2026-01-01", "line_items": [], "total": 12.5}')
     client = _client(fake)
