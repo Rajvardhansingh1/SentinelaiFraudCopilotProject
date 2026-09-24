@@ -18,15 +18,11 @@ services:
       - key: JWT_SECRET
         sync: false  # required in production (Phase 2, D-055) — generate with: python -c "import secrets; print(secrets.token_hex(32))"
       - key: CHROMA_PERSIST_DIR
-        value: /opt/render/project/data/chroma
+        value: ./data/chroma  # free tier has no persistent disk (D-061) — ephemeral, rebuilt from provider calls; only the grounding store, never account/finding data, which all live in Supabase
       - key: ENV
         value: production
       - key: ALLOWED_ORIGINS
         sync: false  # set to the real frontend origin(s) at deploy time
-    disk:
-      name: sentinelai-data
-      mountPath: /opt/render/project/data
-      sizeGB: 1
 
   # Runtime Gateway (D-049): separate service, no local disk. DB access is
   # optional (GATEWAY_RECORD_EVENTS) and, when on, points at the same shared
