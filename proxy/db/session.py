@@ -12,9 +12,23 @@ def _connect_args(database_url: str) -> dict:
     return {"check_same_thread": False} if database_url.startswith("sqlite") else {}
 
 
+def _with_explicit_driver(database_url: str) -> str:
+    # A bare "postgresql://" URL (e.g. Supabase's documented connection
+    # string format) leaves SQLAlchemy to pick a default DBAPI, and that
+    # default isn't guaranteed to be psycopg2 across SQLAlchemy versions —
+    # requirements.txt is unpinned, so a routine dependency bump can silently
+    # resolve it to psycopg (v3), which this project doesn't install,
+    # crashing the app at startup with ModuleNotFoundError. Pin the driver
+    # explicitly so it matches the psycopg2-binary dependency this project
+    # actually ships (D-053), independent of SQLAlchemy's own default.
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + database_url[len("postgresql://"):]
+    return database_url
+
+
 _is_memory = ":memory:" in settings.database_url
 _engine = create_engine(
-    settings.database_url,
+    _with_explicit_driver(settings.database_url),
     connect_args=_connect_args(settings.database_url),
     poolclass=StaticPool if _is_memory else None,
 )
