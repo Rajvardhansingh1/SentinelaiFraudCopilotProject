@@ -18,21 +18,10 @@ export default function AboutPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-semibold text-text-primary">Fraud Copilot</h2>
-          <p className="text-text-primary/70">
-            Fraud Copilot is a multi-agent expense/invoice fraud-detection application built on
-            top of SentinelAI, using LangGraph orchestration for OCR extraction, image tamper
-            forensics, policy checking, and grounded report generation. Its one architectural
-            rule: Fraud Copilot agents never call an LLM provider directly. Every call goes
-            through SentinelAI first.
-          </p>
-        </section>
-
-        <section className="space-y-3">
           <h2 className="text-xl font-semibold text-text-primary">Human in the loop</h2>
           <p className="text-text-primary/70">
             SentinelAI does not automatically apply fixes, deploy changes, or approve/reject a
-            fraud verdict. It records evidence and recommends. A person decides.
+            finding. It records evidence and recommends. A person decides.
           </p>
         </section>
       </main>

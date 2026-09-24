@@ -6,6 +6,6 @@ describe("AboutPage", () => {
   it("renders the product explanation", () => {
     render(<AboutPage />);
     expect(screen.getByRole("heading", { level: 1, name: /about/i })).toBeInTheDocument();
-    expect(screen.getAllByText(/fraud copilot/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/sentinelai/i).length).toBeGreaterThan(0);
   });
 });
