@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     gateway_store_raw_content: bool = False
     # Off by default so the gateway stays stateless (D-049); on = metadata-only SecurityEvent rows.
     gateway_record_events: bool = False
+    # Bug-fix: shared-secret server-to-server auth for the gateway (it has no User/JWT
+    # model of its own — see gateway/main.py). Must be set explicitly in production.
+    gateway_api_key: str = ""
 
     # Auth (Phase 2, D-055). Must be set explicitly in production — proxy/main.py
     # refuses to start in production with this empty. Never a hardcoded default;

@@ -7,7 +7,9 @@ the gateway never accepts, returns, or logs a credential."""
 
 from __future__ import annotations
 
+import hmac
 import logging
+import secrets
 from typing import Callable
 
 from fastapi import Depends, FastAPI, Request
@@ -22,6 +24,19 @@ from proxy.schemas import Message
 
 _is_prod = settings.env == "production"
 
+# Bug fix: the gateway had zero authentication — anyone who could reach it could
+# spend provider budget / bypass the app that's supposed to front it. This is
+# a server-to-server service (Application -> Gateway -> Model, no browser login,
+# no User/Project model here), so it gets a shared-secret bearer key rather than
+# the proxy's per-user JWT — a genuinely different trust model, not a downgrade.
+# Same hard-stop pattern as proxy/main.py's JWT_SECRET check: never a silent,
+# insecure default in production.
+if _is_prod and not settings.gateway_api_key:
+    raise RuntimeError("GATEWAY_API_KEY must be set in production. Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"")
+
+_EFFECTIVE_GATEWAY_KEY = settings.gateway_api_key or secrets.token_hex(32)
+_GATEWAY_PUBLIC_PATHS = {"/health"}
+
 app = FastAPI(
     title="SentinelAI Runtime Gateway",
     docs_url=None if _is_prod else "/docs",
@@ -35,6 +50,18 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.middleware("http")
+async def require_gateway_key(request: Request, call_next):
+    """Every route needs `Authorization: Bearer <GATEWAY_API_KEY>` except /health."""
+    if request.method == "OPTIONS" or request.url.path in _GATEWAY_PUBLIC_PATHS:
+        return await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, _EFFECTIVE_GATEWAY_KEY):
+        return JSONResponse(status_code=401, content={"decision": "ERROR", "reason": "Missing or invalid gateway credential."})
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)

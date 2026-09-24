@@ -52,6 +52,8 @@ services:
         value: "false"
       - key: GATEWAY_RECORD_EVENTS
         value: "false"  # set true once DATABASE_URL below is the same Supabase instance as sentinelai-proxy
+      - key: GATEWAY_API_KEY
+        sync: false  # shared-secret bearer key callers must send as `Authorization: Bearer <key>`; never committed
       - key: DATABASE_URL
         sync: false  # same Supabase Postgres connection string as sentinelai-proxy, so events land in one shared DB. See docs/SUPABASE.md
       - key: ALLOWED_ORIGINS
