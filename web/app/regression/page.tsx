@@ -47,12 +47,27 @@ export default function RegressionPage() {
   }
 
   async function loadBaselines() {
-    setBaselines(await listBaselines());
+    const rows = await listBaselines();
+    setBaselines(rows);
+    return rows;
   }
 
   useEffect(() => {
-    loadBaselines();
-    loadReport();
+    // Check for an existing baseline first (GET /v1/baselines always returns 200,
+    // even with none) before calling getRegressionReport — which 404s when there's
+    // no baseline yet. That 404 is an expected, already-handled state (see the
+    // "no baseline exists yet" message below), not a real error, so we avoid
+    // triggering it — and the console noise a failed fetch logs — when we can
+    // already tell from the baseline list that it's coming.
+    (async () => {
+      const rows = await loadBaselines();
+      if (rows.length === 0) {
+        setErrorState({ code: "baseline_not_found", message: "No baseline exists yet. Create one first." });
+        setLoading(false);
+      } else {
+        await loadReport();
+      }
+    })();
   }, []);
 
   async function handleCreateBaseline() {
